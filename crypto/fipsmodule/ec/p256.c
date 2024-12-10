@@ -49,10 +49,24 @@ static const fiat_p256_felem fiat_p256_one = {
 
 /////////////////////////////////
 
-static inline void fe_sub(uintptr_t out, uintptr_t x, uintptr_t y) { fiat_p256_sub((crypto_word_t*)out, (crypto_word_t*)x, (crypto_word_t*)y); }
 static inline void fe_add(uintptr_t out, uintptr_t x, uintptr_t y) { fiat_p256_add((crypto_word_t*)out, (crypto_word_t*)x, (crypto_word_t*)y); }
 static inline void fe_mul(uintptr_t out, uintptr_t x, uintptr_t y) { fiat_p256_mul((crypto_word_t*)out, (crypto_word_t*)x, (crypto_word_t*)y); }
 static inline void fe_sqr(uintptr_t out, uintptr_t x) { fiat_p256_square((crypto_word_t*)out, (crypto_word_t*)x); }
+
+static uintptr_t adc64(uintptr_t carry_in, uintptr_t l, uintptr_t r, uintptr_t *low_out) {
+  fiat_p256_uint1 carry_out;
+  fiat_p256_addcarryx_u64(low_out, &carry_out, carry_in, l, r);
+  return carry_out;
+}
+static uintptr_t sbb64(uintptr_t carry_in, uintptr_t l, uintptr_t r, uintptr_t *low_out) {
+  fiat_p256_uint1 carry_out;
+  fiat_p256_subborrowx_u64(low_out, &carry_out, carry_in, l, r);
+  return carry_out;
+}
+static inline uint64_t shrd_64(uint64_t lo, uint64_t hi, uint64_t n) {
+  return (((uint128_t)hi << 64) | (uint128_t)lo) >> (n&63);
+}
+
 
 /////////////////////////////////
 
@@ -106,6 +120,54 @@ uintptr_t _br2_remu(uintptr_t a, uintptr_t b) {
 static inline __attribute__((always_inline, unused))
 uintptr_t _br2_shamt(uintptr_t a) {
   return a&(sizeof(uintptr_t)*8-1);
+}
+
+static void fe_sub(uintptr_t out, uintptr_t x, uintptr_t y) {
+  uintptr_t x2, x4, x6, x8, x1, x11, x3, x13, x5, x17, x15, x7, x9, x10, x12, x14, x16;
+  x2 = sbb64((uintptr_t)(UINTMAX_C(0)), _br2_load(x, sizeof(uintptr_t)), _br2_load(y, sizeof(uintptr_t)), &x1);
+  x4 = sbb64(x2, _br2_load((x)+((uintptr_t)(UINTMAX_C(8))), sizeof(uintptr_t)), _br2_load((y)+((uintptr_t)(UINTMAX_C(8))), sizeof(uintptr_t)), &x3);
+  x6 = sbb64(x4, _br2_load((x)+((uintptr_t)(UINTMAX_C(16))), sizeof(uintptr_t)), _br2_load((y)+((uintptr_t)(UINTMAX_C(16))), sizeof(uintptr_t)), &x5);
+  x8 = sbb64(x6, _br2_load((x)+((uintptr_t)(UINTMAX_C(24))), sizeof(uintptr_t)), _br2_load((y)+((uintptr_t)(UINTMAX_C(24))), sizeof(uintptr_t)), &x7);
+  x9 = value_barrier_w(((uintptr_t)(UINTMAX_C(0)))-(x8));
+  x11 = adc64((uintptr_t)(UINTMAX_C(0)), x1, x9, &x10);
+  x13 = adc64(x11, x3, (x9)&((uintptr_t)(UINTMAX_C(4294967295))), &x12);
+  x15 = adc64(x13, x5, (uintptr_t)(UINTMAX_C(0)), &x14);
+  x17 = adc64(x15, x7, (x9)&((uintptr_t)(UINTMAX_C(18446744069414584321))), &x16);
+  (void)x17;
+  _br2_store(out, x10, sizeof(uintptr_t));
+  _br2_store((out)+((uintptr_t)(UINTMAX_C(8))), x12, sizeof(uintptr_t));
+  _br2_store((out)+((uintptr_t)(UINTMAX_C(16))), x14, sizeof(uintptr_t));
+  _br2_store((out)+((uintptr_t)(UINTMAX_C(24))), x16, sizeof(uintptr_t));
+  return;
+}
+
+static void fe_halve(uintptr_t y, uintptr_t x) {
+  uintptr_t mh0, mh1, mh2, m, mh3, y0, y1, y2, y3, mmh;
+  m = value_barrier_w(((uintptr_t)(UINTMAX_C(0)))-((_br2_load(x, sizeof(uintptr_t)))&((uintptr_t)(UINTMAX_C(1)))));
+  mh0 = (uintptr_t)(UINTMAX_C(-1));
+  mh1 = (mh0)>>_br2_shamt((uintptr_t)(UINTMAX_C(33)));
+  mh2 = (mh0)<<_br2_shamt((uintptr_t)(UINTMAX_C(63)));
+  mh3 = ((mh0)<<_br2_shamt((uintptr_t)(UINTMAX_C(32))))>>_br2_shamt((uintptr_t)(UINTMAX_C(1)));
+  { uint8_t _br2_stackalloc_mmh[(uintptr_t)(UINTMAX_C(32))] = {0}; mmh = (uintptr_t)&_br2_stackalloc_mmh;
+  _br2_store(mmh, (m)&(mh0), sizeof(uintptr_t));
+  _br2_store((mmh)+((uintptr_t)(UINTMAX_C(8))), (m)&(mh1), sizeof(uintptr_t));
+  _br2_store((mmh)+((uintptr_t)(UINTMAX_C(16))), (m)&(mh2), sizeof(uintptr_t));
+  _br2_store((mmh)+((uintptr_t)(UINTMAX_C(24))), (m)&(mh3), sizeof(uintptr_t));
+  y0 = _br2_load(y, sizeof(uintptr_t));
+  y1 = _br2_load((y)+((uintptr_t)(UINTMAX_C(8))), sizeof(uintptr_t));
+  y2 = _br2_load((y)+((uintptr_t)(UINTMAX_C(16))), sizeof(uintptr_t));
+  y3 = _br2_load((y)+((uintptr_t)(UINTMAX_C(24))), sizeof(uintptr_t));
+  y0 = shrd_64(y0, y1, (uintptr_t)(UINTMAX_C(1)));
+  y1 = shrd_64(y1, y2, (uintptr_t)(UINTMAX_C(1)));
+  y2 = shrd_64(y2, y3, (uintptr_t)(UINTMAX_C(1)));
+  y3 = (y3)>>_br2_shamt((uintptr_t)(UINTMAX_C(1)));
+  _br2_store(y, y0, sizeof(uintptr_t));
+  _br2_store((y)+((uintptr_t)(UINTMAX_C(8))), y1, sizeof(uintptr_t));
+  _br2_store((y)+((uintptr_t)(UINTMAX_C(16))), y2, sizeof(uintptr_t));
+  _br2_store((y)+((uintptr_t)(UINTMAX_C(24))), y3, sizeof(uintptr_t));
+  fe_sub(y, y, mmh);
+  }
+  return;
 }
 
 static void fiat_p256_point_add_affine_nz_nz_neq(uintptr_t out, uintptr_t in1, uintptr_t in2) {
@@ -187,6 +249,38 @@ static void fiat_p256_point_add_nz_nz_neq(uintptr_t out, uintptr_t in1, uintptr_
   }
   }
   }
+  }
+  }
+  }
+  return;
+}
+
+static void fiat_p256_point_double_impl(uintptr_t out, uintptr_t in1) {
+  uintptr_t t2, tmp, A, D;
+  { uint8_t _br2_stackalloc_D[(uintptr_t)(UINTMAX_C(32))] = {0}; D = (uintptr_t)&_br2_stackalloc_D;
+  { uint8_t _br2_stackalloc_A[(uintptr_t)(UINTMAX_C(32))] = {0}; A = (uintptr_t)&_br2_stackalloc_A;
+  { uint8_t _br2_stackalloc_tmp[(uintptr_t)(UINTMAX_C(32))] = {0}; tmp = (uintptr_t)&_br2_stackalloc_tmp;
+  fe_add(D, (in1)+((uintptr_t)(UINTMAX_C(32))), (in1)+((uintptr_t)(UINTMAX_C(32))));
+  fe_sqr(tmp, ((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))));
+  fe_sqr(D, D);
+  fe_mul(((out)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), ((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), (in1)+((uintptr_t)(UINTMAX_C(32))));
+  fe_add(((out)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), ((out)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), ((out)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))));
+  fe_add(A, in1, tmp);
+  fe_sub(tmp, in1, tmp);
+  { uint8_t _br2_stackalloc_t2[(uintptr_t)(UINTMAX_C(32))] = {0}; t2 = (uintptr_t)&_br2_stackalloc_t2;
+  fe_add(t2, tmp, tmp);
+  fe_add(tmp, t2, tmp);
+  }
+  fe_sqr((out)+((uintptr_t)(UINTMAX_C(32))), D);
+  fe_mul(A, A, tmp);
+  fe_mul(D, D, in1);
+  fe_sqr(out, A);
+  fe_add(tmp, D, D);
+  fe_sub(out, out, tmp);
+  fe_sub(D, D, out);
+  fe_mul(D, D, A);
+  fe_halve((out)+((uintptr_t)(UINTMAX_C(32))), (out)+((uintptr_t)(UINTMAX_C(32))));
+  fe_sub((out)+((uintptr_t)(UINTMAX_C(32))), D, (out)+((uintptr_t)(UINTMAX_C(32))));
   }
   }
   }
@@ -306,25 +400,6 @@ static void fiat_p256_inv_square(fiat_p256_felem out,
   fiat_p256_square(out, ret);  // 2^256 - 2^224 + 2^192 + 2^96 - 2^2
 }
 
-static inline uint64_t shrd_64(uint64_t lo, uint64_t hi, uint64_t n) {
-  return (((uint128_t)hi << 64) | (uint128_t)lo) >> (n&63);
-}
-
-static void fiat_p256_halve(fiat_p256_felem y, const fiat_p256_felem x) {
-  static const fiat_p256_felem minus_half = {
-    -UINT64_C(1), -UINT64_C(1) >> 33, -UINT64_C(1) << 63, -UINT64_C(1) << 32 >> 1};
-  fiat_p256_felem maybe_minus_half = {0};
-  fiat_p256_conditional_copy(maybe_minus_half, minus_half, x[0] & 1);
-
-  y[0] = shrd_64(y[0], y[1], 1);
-  y[1] = shrd_64(y[1], y[2], 1);
-  y[2] = shrd_64(y[2], y[3], 1);
-  y[3] = y[3] >> 1;
-  fiat_p256_sub(y, y, maybe_minus_half);
-}
-
-static inline void fe_halve(uintptr_t out, uintptr_t x) { fiat_p256_halve((crypto_word_t*)out, (crypto_word_t*)x); }
-
 // Group operations
 // ----------------
 //
@@ -342,38 +417,6 @@ static inline void fe_halve(uintptr_t out, uintptr_t x) { fiat_p256_halve((crypt
 // <https://github.com/mit-plv/fiat-crypto/blob/79f8b5f39ed609339f0233098dee1a3c4e6b3080/src/Spec/WeierstrassCurve.v#L28>
 // As a sanity check, a proof that these points form a commutative group:
 // <https://github.com/mit-plv/fiat-crypto/blob/79f8b5f39ed609339f0233098dee1a3c4e6b3080/src/Curves/Weierstrass/AffineProofs.v#L33>
-
-static void fiat_p256_point_double_impl(uintptr_t out, uintptr_t in1) {
-  uintptr_t t2, tmp, A, D;
-  { uint8_t _br2_stackalloc_D[(uintptr_t)(UINTMAX_C(32))] = {0}; D = (uintptr_t)&_br2_stackalloc_D;
-  { uint8_t _br2_stackalloc_A[(uintptr_t)(UINTMAX_C(32))] = {0}; A = (uintptr_t)&_br2_stackalloc_A;
-  { uint8_t _br2_stackalloc_tmp[(uintptr_t)(UINTMAX_C(32))] = {0}; tmp = (uintptr_t)&_br2_stackalloc_tmp;
-  fe_add(D, (in1)+((uintptr_t)(UINTMAX_C(32))), (in1)+((uintptr_t)(UINTMAX_C(32))));
-  fe_sqr(tmp, ((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))));
-  fe_sqr(D, D);
-  fe_mul(((out)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), ((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), (in1)+((uintptr_t)(UINTMAX_C(32))));
-  fe_add(((out)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), ((out)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), ((out)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))));
-  fe_add(A, in1, tmp);
-  fe_sub(tmp, in1, tmp);
-  { uint8_t _br2_stackalloc_t2[(uintptr_t)(UINTMAX_C(32))] = {0}; t2 = (uintptr_t)&_br2_stackalloc_t2;
-  fe_add(t2, tmp, tmp);
-  fe_add(tmp, t2, tmp);
-  }
-  fe_sqr((out)+((uintptr_t)(UINTMAX_C(32))), D);
-  fe_mul(A, A, tmp);
-  fe_mul(D, D, in1);
-  fe_sqr(out, A);
-  fe_add(tmp, D, D);
-  fe_sub(out, out, tmp);
-  fe_sub(D, D, out);
-  fe_mul(D, D, A);
-  fe_halve((out)+((uintptr_t)(UINTMAX_C(32))), (out)+((uintptr_t)(UINTMAX_C(32))));
-  fe_sub((out)+((uintptr_t)(UINTMAX_C(32))), D, (out)+((uintptr_t)(UINTMAX_C(32))));
-  }
-  }
-  }
-  return;
-}
 
 static void fiat_p256_point_double(fiat_p256_felem out[3],
                                    const fiat_p256_felem in[3]) {
