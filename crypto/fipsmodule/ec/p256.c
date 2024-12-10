@@ -47,6 +47,105 @@ static const fiat_p256_felem fiat_p256_one = {
 #error "Must define either OPENSSL_32_BIT or OPENSSL_64_BIT"
 #endif
 
+/////////////////////////////////
+
+static inline void fe_sub(uintptr_t out, uintptr_t x, uintptr_t y) { fiat_p256_sub((crypto_word_t*)out, (crypto_word_t*)x, (crypto_word_t*)y); }
+static inline void fe_add(uintptr_t out, uintptr_t x, uintptr_t y) { fiat_p256_add((crypto_word_t*)out, (crypto_word_t*)x, (crypto_word_t*)y); }
+static inline void fe_mul(uintptr_t out, uintptr_t x, uintptr_t y) { fiat_p256_mul((crypto_word_t*)out, (crypto_word_t*)x, (crypto_word_t*)y); }
+static inline void fe_sqr(uintptr_t out, uintptr_t x) { fiat_p256_square((crypto_word_t*)out, (crypto_word_t*)x); }
+
+/////////////////////////////////
+
+// We use memcpy to work around -fstrict-aliasing.
+// A plain memcpy is enough on clang 10, but not on gcc 10, which fails
+// to infer the bounds on an integer loaded by memcpy.
+// Adding a range mask after memcpy in turn makes slower code in clang.
+// Loading individual bytes, shifting them together, and or-ing is fast
+// on clang and sometimes on GCC, but other times GCC inlines individual
+// byte operations without reconstructing wider accesses.
+// The little-endian idiom below seems fast in gcc 9+ and clang 10.
+static inline  __attribute__((always_inline, unused))
+uintptr_t _br2_load(uintptr_t a, uintptr_t sz) {
+  switch (sz) {
+  case 1: { uint8_t  r = 0; memcpy(&r, (void*)a, 1); return r; }
+  case 2: { uint16_t r = 0; memcpy(&r, (void*)a, 2); return r; }
+  case 4: { uint32_t r = 0; memcpy(&r, (void*)a, 4); return r; }
+  case 8: { uint64_t r = 0; memcpy(&r, (void*)a, 8); return r; }
+  default: __builtin_unreachable();
+  }
+}
+
+static inline __attribute__((always_inline, unused))
+void _br2_store(uintptr_t a, uintptr_t v, uintptr_t sz) {
+  memcpy((void*)a, &v, sz);
+}
+
+static inline __attribute__((always_inline, unused))
+uintptr_t _br2_mulhuu(uintptr_t a, uintptr_t b) {
+  #if (UINTPTR_MAX == (UINTMAX_C(1)<<31) - 1 + (UINTMAX_C(1)<<31))
+	  return ((uint64_t)a * b) >> 32;
+  #elif (UINTPTR_MAX == (UINTMAX_C(1)<<63) - 1 + (UINTMAX_C(1)<<63))
+    return ((unsigned __int128)a * b) >> 64;
+  #else
+    #error ""32-bit or 64-bit uintptr_t required""
+  #endif
+}
+
+static inline __attribute__((always_inline, unused))
+uintptr_t _br2_divu(uintptr_t a, uintptr_t b) {
+  if (!b) return -1;
+  return a/b;
+}
+
+static inline __attribute__((always_inline, unused))
+uintptr_t _br2_remu(uintptr_t a, uintptr_t b) {
+  if (!b) return a;
+  return a%b;
+}
+
+static inline __attribute__((always_inline, unused))
+uintptr_t _br2_shamt(uintptr_t a) {
+  return a&(sizeof(uintptr_t)*8-1);
+}
+
+static void fiat_p256_point_add_affine_nz_nz_neq(uintptr_t out, uintptr_t in1, uintptr_t in2) {
+  uintptr_t z1z1, Hsqr, u2, Hcub, r, h, s2;
+  { uint8_t _br2_stackalloc_z1z1[(uintptr_t)(UINTMAX_C(32))] = {0}; z1z1 = (uintptr_t)&_br2_stackalloc_z1z1;
+  { uint8_t _br2_stackalloc_u2[(uintptr_t)(UINTMAX_C(32))] = {0}; u2 = (uintptr_t)&_br2_stackalloc_u2;
+  { uint8_t _br2_stackalloc_h[(uintptr_t)(UINTMAX_C(32))] = {0}; h = (uintptr_t)&_br2_stackalloc_h;
+  { uint8_t _br2_stackalloc_s2[(uintptr_t)(UINTMAX_C(32))] = {0}; s2 = (uintptr_t)&_br2_stackalloc_s2;
+  { uint8_t _br2_stackalloc_r[(uintptr_t)(UINTMAX_C(32))] = {0}; r = (uintptr_t)&_br2_stackalloc_r;
+  { uint8_t _br2_stackalloc_Hsqr[(uintptr_t)(UINTMAX_C(32))] = {0}; Hsqr = (uintptr_t)&_br2_stackalloc_Hsqr;
+  { uint8_t _br2_stackalloc_Hcub[(uintptr_t)(UINTMAX_C(32))] = {0}; Hcub = (uintptr_t)&_br2_stackalloc_Hcub;
+  fe_sqr(z1z1, ((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))));
+  fe_mul(u2, in2, z1z1);
+  fe_sub(h, u2, in1);
+  fe_mul(s2, ((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), z1z1);
+  fe_mul(((out)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), h, ((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))));
+  fe_mul(s2, s2, (in2)+((uintptr_t)(UINTMAX_C(32))));
+  fe_sub(r, s2, (in1)+((uintptr_t)(UINTMAX_C(32))));
+  fe_sqr(Hsqr, h);
+  fe_sqr(out, r);
+  fe_mul(Hcub, Hsqr, h);
+  fe_mul(u2, in1, Hsqr);
+  fe_sub(out, out, Hcub);
+  fe_sub(out, out, u2);
+  fe_sub(out, out, u2);
+  fe_sub(h, u2, out);
+  fe_mul(s2, Hcub, (in1)+((uintptr_t)(UINTMAX_C(32))));
+  fe_mul(h, h, r);
+  fe_sub((out)+((uintptr_t)(UINTMAX_C(32))), h, s2);
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  return;
+}
+
+////////////////////////////////////
 
 static crypto_word_t fiat_p256_is_zero(const fiat_p256_felem x) {
   crypto_word_t ret;
@@ -317,7 +416,8 @@ static void fiat_p256_point_add_affine_nz(fiat_p256_felem out[3],
                                           const fiat_p256_felem in2[2]) {
   fiat_p256_felem t[3];
   crypto_word_t p1zero = fiat_p256_is_zero(in1[2]);
-  fiat_p256_point_add_nz_nz_neq(t, in1, 1, in2);
+  fiat_p256_point_add_affine_nz_nz_neq((uintptr_t)t, (uintptr_t)in1, (uintptr_t)in2);
+  //fiat_p256_point_add_nz_nz_neq(t, in1, 1, in2);
   constant_time_conditional_memcpy(t[0], in2[0], sizeof(t[0]), p1zero);
   constant_time_conditional_memcpy(t[1], in2[1], sizeof(t[1]), p1zero);
   constant_time_conditional_memcpy(t[2], fiat_p256_one, sizeof(t[2]), p1zero);
