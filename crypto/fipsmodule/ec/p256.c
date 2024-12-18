@@ -67,7 +67,6 @@ static inline uint64_t shrd_64(uint64_t lo, uint64_t hi, uint64_t n) {
   return (((uint128_t)hi << 64) | (uint128_t)lo) >> (n&63);
 }
 
-
 /////////////////////////////////
 
 // We use memcpy to work around -fstrict-aliasing.
@@ -287,13 +286,42 @@ static void fiat_p256_point_double_impl(uintptr_t out, uintptr_t in1) {
   return;
 }
 
-////////////////////////////////////
+static void memcxor(uintptr_t d, uintptr_t s, uintptr_t n, uintptr_t mask) {
+  constant_time_conditional_memxor((void*)d, (void*)s, n, mask);
+}
+
+#if 0
+static void memcmov(uintptr_t d, uintptr_t s, uintptr_t n, uintptr_t mask) {
+  constant_time_conditional_memcpy((void*)d, (void*)s, n, mask);
+}
+#endif
 
 static crypto_word_t fiat_p256_is_zero(const fiat_p256_felem x) {
   crypto_word_t ret;
   fiat_p256_nonzero(&ret, x);
   return constant_time_is_zero_w(ret);
 }
+
+static void fiat_p256_point_add_affine_conditional(uintptr_t out, uintptr_t in1, uintptr_t in2, uintptr_t c) {
+  uintptr_t p_out, p1zero, p2zero, t;
+  p1zero = fiat_p256_is_zero((void*)(((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32)))));
+  p2zero = constant_time_is_zero_w(c);
+  { uint8_t _br2_stackalloc_p_out[(uintptr_t)(UINTMAX_C(96))] = {0}; p_out = (uintptr_t)&_br2_stackalloc_p_out;
+  fiat_p256_point_add_affine_nz_nz_neq(p_out, in1, in2);
+  { uint8_t _br2_stackalloc_t[(uintptr_t)(UINTMAX_C(96))] = {0}; t = (uintptr_t)&_br2_stackalloc_t;
+  OPENSSL_memset((void*)t, (uintptr_t)(UINTMAX_C(0)), ((uintptr_t)(UINTMAX_C(3)))*((uintptr_t)(UINTMAX_C(32))));
+  memcxor(t, p_out, ((uintptr_t)(UINTMAX_C(3)))*((uintptr_t)(UINTMAX_C(32))), (((uintptr_t)(UINTMAX_C(-1)))^(p1zero))&(((uintptr_t)(UINTMAX_C(-1)))^(p2zero)));
+  memcxor(t, in1, ((uintptr_t)(UINTMAX_C(3)))*((uintptr_t)(UINTMAX_C(32))), (((uintptr_t)(UINTMAX_C(-1)))^(p1zero))&(p2zero));
+  memcxor(t, in2, (uintptr_t)(UINTMAX_C(32)), (p1zero)&(((uintptr_t)(UINTMAX_C(-1)))^(p2zero)));
+  memcxor((t)+((uintptr_t)(UINTMAX_C(32))), (in2)+((uintptr_t)(UINTMAX_C(32))), (uintptr_t)(UINTMAX_C(32)), (p1zero)&(((uintptr_t)(UINTMAX_C(-1)))^(p2zero)));
+  memcxor(((t)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), (uintptr_t)&fiat_p256_one, (uintptr_t)(UINTMAX_C(32)), (p1zero)&(((uintptr_t)(UINTMAX_C(-1)))^(p2zero)));
+  memcpy((void*)out, (void*)t, (uintptr_t)(UINTMAX_C(96)));
+  }
+  }
+  return;
+}
+
+////////////////////////////////////
 
 // this function is faster than constant_time_conditional_memcpy when the
 // inputs are already in general-purpose registers, or when some inputs are
@@ -535,25 +563,6 @@ static void fiat_p256_point_add_affine_nz(fiat_p256_felem out[3],
   constant_time_conditional_memcpy(t[0], in2[0], sizeof(t[0]), p1zero);
   constant_time_conditional_memcpy(t[1], in2[1], sizeof(t[1]), p1zero);
   constant_time_conditional_memcpy(t[2], fiat_p256_one, sizeof(t[2]), p1zero);
-  OPENSSL_memcpy(out, t, sizeof(t));
-}
-
-static void fiat_p256_point_add_affine_conditional(fiat_p256_felem out[3],
-                                                   const fiat_p256_felem in1[3],
-                                                   const fiat_p256_felem in2[2],
-                                                   size_t c) {
-  crypto_word_t p1zero = fiat_p256_is_zero(in1[2]);
-  crypto_word_t p2zero = constant_time_is_zero_w(c);
-  fiat_p256_felem p_out[3];
-  fiat_p256_point_add_affine_nz_nz_neq((uintptr_t)p_out, (uintptr_t)in1, (uintptr_t)in2);
-  //crypto_word_t doubling = fiat_p256_point_add_nz_nz_neq_(p_out, in1, 1, in2);
-  //(void)doubling; assert(!(doubling & ~(p1zero | p2zero)));
-  fiat_p256_felem t[3] = {{0}, {0}, {0}};
-  constant_time_conditional_memxor(t,    p_out,        sizeof(t),   ~p1zero & ~p2zero);
-  constant_time_conditional_memxor(t,    in1,          sizeof(t),   ~p1zero &  p2zero);
-  constant_time_conditional_memxor(t[0], in2[0],       sizeof(t[0]), p1zero & ~p2zero);
-  constant_time_conditional_memxor(t[1], in2[1],       sizeof(t[1]), p1zero & ~p2zero);
-  constant_time_conditional_memxor(t[2], fiat_p256_one,sizeof(t[2]), p1zero & ~p2zero);
   OPENSSL_memcpy(out, t, sizeof(t));
 }
 
@@ -864,7 +873,7 @@ static void p256_point_mul_base(fiat_p256_felem ret[3], const uint8_t s[32]) {
       fiat_p256_select_point_affine_15(t, fiat_p256_g_pre_comp[j], bits-1);
 
       if (!ret_is_zero) {
-        fiat_p256_point_add_affine_conditional(ret, ret, t, bits);
+        fiat_p256_point_add_affine_conditional((uintptr_t)ret, (uintptr_t)ret, (uintptr_t)t, (uintptr_t)bits);
       } else {
         OPENSSL_memcpy(ret, t, sizeof(t));
         fiat_p256_conditional_zero_or_one(ret[2], bits);
@@ -945,7 +954,7 @@ static void p256_point_mul_base(fiat_p256_felem ret[3], const uint8_t s[32]) {
     fiat_p256_opp_conditional(t[1], wvalue & 1);
 
     if (!ret_is_zero) {
-      fiat_p256_point_add_affine_conditional(ret, ret, t, wvalue>>1);
+      fiat_p256_point_add_affine_conditional((uintptr_t)ret, (uintptr_t)ret, (uintptr_t)t, wvalue>>1);
     } else {
       OPENSSL_memcpy(ret, t, sizeof(t));
       fiat_p256_conditional_zero_or_one(ret[2], wvalue >> 1);
