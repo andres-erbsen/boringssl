@@ -339,25 +339,19 @@ static void fiat_p256_point_add_impl(uintptr_t out, uintptr_t in1, uintptr_t in2
 
 ////////////////////////////////////
 
-// this function is faster than constant_time_conditional_memcpy when the
-// inputs are already in general-purpose registers, or when some inputs are
-// constants for which the bitwise selection can be simplified.
-static void fiat_p256_conditional_copy(fiat_p256_felem x,
-                                       const fiat_p256_felem y,
-                                       crypto_word_t t) {
-  fiat_p256_selectznz(x, !!t, x, y);
-}
-
 static void fiat_p256_opp_conditional(fiat_p256_felem x, crypto_word_t c) {
   fiat_p256_felem alignas(32) n;
   fiat_p256_opp(n, x);
-  fiat_p256_conditional_copy(x, n, c);
+  fiat_p256_cmovznz_u64(&x[0], c, x[0], n[0]);
+  fiat_p256_cmovznz_u64(&x[1], c, x[1], n[1]);
+  fiat_p256_cmovznz_u64(&x[2], c, x[2], n[2]);
+  fiat_p256_cmovznz_u64(&x[3], c, x[3], n[3]);
 }
 
 static void fiat_p256_conditional_zero_or_one(fiat_p256_felem x,
                                               crypto_word_t c) {
   OPENSSL_memset(x, 0, sizeof(fiat_p256_felem));
-  fiat_p256_conditional_copy(x, fiat_p256_one, c);
+  constant_time_conditional_memcpy(x, fiat_p256_one, sizeof(fiat_p256_one), ~constant_time_is_zero_w(c));
 }
 
 static void fiat_p256_from_words(fiat_p256_felem out,
