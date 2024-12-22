@@ -57,6 +57,9 @@ static crypto_word_t fiat_p256_is_zero(const fiat_p256_felem x) {
   fiat_p256_nonzero(&ret, x);
   return constant_time_is_zero_w(ret);
 }
+static crypto_word_t fiat_p256_nz(const fiat_p256_felem x) {
+  return x[0] | x[1] | x[2] | x[3];
+}
 
 static uintptr_t adc64(uintptr_t carry_in, uintptr_t l, uintptr_t r, uintptr_t *low_out) {
   fiat_p256_uint1 carry_out;
@@ -184,7 +187,9 @@ static void fe_halve(uintptr_t y, uintptr_t x) {
   return;
 }
 
-static void fiat_p256_point_add_affine_nz_nz_neq(uintptr_t out, uintptr_t in1, uintptr_t in2) {
+static uintptr_t fiat_p256_point_add_affine_nz_nz_neq(uintptr_t out, uintptr_t in1, uintptr_t in2) {
+  uintptr_t ret = 0;
+
   uintptr_t z1z1, Hsqr, u2, Hcub, r, h, s2;
   { uint8_t _br2_stackalloc_z1z1[(uintptr_t)(UINTMAX_C(32))] = {0}; z1z1 = (uintptr_t)&_br2_stackalloc_z1z1;
   { uint8_t _br2_stackalloc_u2[(uintptr_t)(UINTMAX_C(32))] = {0}; u2 = (uintptr_t)&_br2_stackalloc_u2;
@@ -204,6 +209,9 @@ static void fiat_p256_point_add_affine_nz_nz_neq(uintptr_t out, uintptr_t in1, u
   fe_sqr(out, r);
   fe_mul(Hcub, Hsqr, h);
   fe_mul(u2, in1, Hsqr);
+
+  ret = fiat_p256_nz((void*)Hcub) | fiat_p256_nz((void*)out);
+
   fe_sub(out, out, Hcub);
   fe_sub(out, out, u2);
   fe_sub(out, out, u2);
@@ -218,10 +226,13 @@ static void fiat_p256_point_add_affine_nz_nz_neq(uintptr_t out, uintptr_t in1, u
   }
   }
   }
-  return;
+
+  return ret;
 }
 
-static void fiat_p256_point_add_nz_nz_neq(uintptr_t out, uintptr_t in1, uintptr_t in2) {
+static uintptr_t fiat_p256_point_add_nz_nz_neq(uintptr_t out, uintptr_t in1, uintptr_t in2) {
+  uintptr_t ret = 0;
+
   uintptr_t z1z1, z2z2, u1, Hsqr, u2, Hcub, s1, r, h, s2;
   { uint8_t _br2_stackalloc_z1z1[(uintptr_t)(UINTMAX_C(32))] = {0}; z1z1 = (uintptr_t)&_br2_stackalloc_z1z1;
   { uint8_t _br2_stackalloc_z2z2[(uintptr_t)(UINTMAX_C(32))] = {0}; z2z2 = (uintptr_t)&_br2_stackalloc_z2z2;
@@ -238,6 +249,7 @@ static void fiat_p256_point_add_nz_nz_neq(uintptr_t out, uintptr_t in1, uintptr_
   fe_sqr(z2z2, ((in2)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))));
   fe_mul(u1, in1, z2z2);
   fe_sub(h, u2, u1);
+
   fe_mul(s2, ((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), z1z1);
   fe_mul(((out)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), h, ((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))));
   fe_mul(((out)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), ((out)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), ((in2)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))));
@@ -249,6 +261,9 @@ static void fiat_p256_point_add_nz_nz_neq(uintptr_t out, uintptr_t in1, uintptr_
   fe_sqr(out, r);
   fe_mul(Hcub, Hsqr, h);
   fe_mul(u2, u1, Hsqr);
+
+  ret = fiat_p256_nz((void*)Hcub) | fiat_p256_nz((void*)out);
+
   fe_sub(out, out, Hcub);
   fe_sub(out, out, u2);
   fe_sub(out, out, u2);
@@ -266,7 +281,8 @@ static void fiat_p256_point_add_nz_nz_neq(uintptr_t out, uintptr_t in1, uintptr_
   }
   }
   }
-  return;
+
+  return ret;
 }
 
 static void fiat_p256_point_double_impl(uintptr_t out, uintptr_t in1) {
@@ -534,7 +550,9 @@ static void fiat_p256_point_add_nz(fiat_p256_felem out[3],
                                    const fiat_p256_felem in2[3]) {
   fiat_p256_felem t[3];
   OPENSSL_memcpy(t, in1, sizeof(t));
-  fiat_p256_point_add_nz_nz_neq((uintptr_t)out, (uintptr_t)t, (uintptr_t)in2);
+  if (!value_barrier_w(fiat_p256_point_add_nz_nz_neq((uintptr_t)out, (uintptr_t)t, (uintptr_t)in2))) {
+    fiat_p256_point_double_impl((uintptr_t)out, (uintptr_t)in1);
+  }
 }
 
 static void fiat_p256_point_add_affine_nz(fiat_p256_felem out[3],
@@ -542,7 +560,9 @@ static void fiat_p256_point_add_affine_nz(fiat_p256_felem out[3],
                                           const fiat_p256_felem in2[2]) {
   fiat_p256_felem t[3];
   OPENSSL_memcpy(t, in1, sizeof(t));
-  fiat_p256_point_add_affine_nz_nz_neq((uintptr_t)out, (uintptr_t)t, (uintptr_t)in2);
+  if (!value_barrier_w(fiat_p256_point_add_affine_nz_nz_neq((uintptr_t)out, (uintptr_t)t, (uintptr_t)in2))) {
+    fiat_p256_point_double_impl((uintptr_t)out, (uintptr_t)in1);
+  }
 }
 
 // constant_time_table_select copies to |dst| from |src| the |i|th out of |n|
