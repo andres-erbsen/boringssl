@@ -249,7 +249,6 @@ static uintptr_t fiat_p256_point_add_nz_nz_neq(uintptr_t out, uintptr_t in1, uin
   fe_sqr(z2z2, ((in2)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))));
   fe_mul(u1, in1, z2z2);
   fe_sub(h, u2, u1);
-
   fe_mul(s2, ((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), z1z1);
   fe_mul(((out)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), h, ((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))));
   fe_mul(((out)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), ((out)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), ((in2)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))));
@@ -477,52 +476,6 @@ static void fiat_p256_point_double(fiat_p256_felem out[3],
   return fiat_p256_point_double_impl((uintptr_t)out, (uintptr_t)in);
 }
 
-// returns -1 and an incorrect point if the input points are equal.
-#if defined(__GNUC__) && !defined(OPENSSL_SMALL)
-__attribute__((always_inline)) // 0.5% on P-256 ECDH
-#endif
-static crypto_word_t fiat_p256_point_add_nz_nz_neq_(fiat_p256_felem out[3],
-                                                   const fiat_p256_felem in1[3],
-                                                   const int p2affine,
-                                                   const fiat_p256_felem *in2) {
-  fiat_p256_felem z1z1, z2z2, u1, u2, h, s1, s2, r, Hsqr, Hcub; // HMV'04p89.14
-  fiat_p256_square(z1z1, in1[2]);  // A = Z^2
-  fiat_p256_mul(u2, in2[0], z1z1);  // C = X2*A
-  if (p2affine) {
-    OPENSSL_memcpy(u1, in1[0], sizeof(u1));
-  } else {
-    fiat_p256_square(z2z2, in2[2]);
-    fiat_p256_mul(u1, in1[0], z2z2);
-  }
-  fiat_p256_sub(h, u2, u1);  // E = C - X1
-  fiat_p256_mul(s2, in1[2], z1z1);  // B + Z1*A
-  fiat_p256_mul(out[2], h, in1[2]);  // Z3 = E*Z1
-  if (!p2affine) {
-    fiat_p256_mul(out[2], out[2], in2[2]);
-  }
-  fiat_p256_mul(s2, s2, in2[1]);  // D = Y2 * B
-  if (p2affine) {  // Z2 == 1
-    OPENSSL_memcpy(s1, in1[1], sizeof(s1));
-  } else {
-    fiat_p256_mul(s1, in2[2], z2z2); // in1[1] * z2**3
-    fiat_p256_mul(s1, s1, in1[1]);
-  }
-  fiat_p256_sub(r, s2, s1);  // F = D - Y1
-  crypto_word_t doubling = fiat_p256_is_zero(h) & fiat_p256_is_zero(r);
-  fiat_p256_square(Hsqr, h);  // G = E^2
-  fiat_p256_square(out[0], r);  // F^2
-  fiat_p256_mul(Hcub, Hsqr, h);  // H = G*E
-  fiat_p256_mul(u2, u1, Hsqr);  // I = X1 * G
-  fiat_p256_sub(out[0], out[0], Hcub);
-  fiat_p256_sub(out[0], out[0], u2);
-  fiat_p256_sub(out[0], out[0], u2);
-  fiat_p256_sub(h, u2, out[0]);
-  fiat_p256_mul(s2, Hcub, s1);  // Y1 * H
-  fiat_p256_mul(h, h, r);       // E * F
-  fiat_p256_sub(out[1], h, s2);
-  return doubling;
-}
-
 // returns -1 and incorrect output if the input points are equal and nonzero.
 static crypto_word_t fiat_p256_point_add_nnteq(fiat_p256_felem out[3],
                                                const fiat_p256_felem in1[3],
@@ -530,7 +483,7 @@ static crypto_word_t fiat_p256_point_add_nnteq(fiat_p256_felem out[3],
   crypto_word_t p1zero = fiat_p256_is_zero(in1[2]);
   crypto_word_t p2zero = fiat_p256_is_zero(in2[2]);
   fiat_p256_felem p_out[3];
-  crypto_word_t doubling = fiat_p256_point_add_nz_nz_neq_(p_out, in1, 0, in2);
+  crypto_word_t doubling = constant_time_is_zero_w(fiat_p256_point_add_nz_nz_neq((uintptr_t)p_out, (uintptr_t)in1, (uintptr_t)in2));
   fiat_p256_felem t[3] = {{0}, {0}, {0}};
   constant_time_conditional_memxor(t, p_out, sizeof(t), ~p1zero & ~p2zero);
   constant_time_conditional_memxor(t, in1,   sizeof(t), ~p1zero &  p2zero);
