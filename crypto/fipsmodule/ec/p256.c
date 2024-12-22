@@ -52,14 +52,6 @@ static const fiat_p256_felem fiat_p256_one = {
 static inline void fe_add(uintptr_t out, uintptr_t x, uintptr_t y) { fiat_p256_add((crypto_word_t*)out, (crypto_word_t*)x, (crypto_word_t*)y); }
 static inline void fe_mul(uintptr_t out, uintptr_t x, uintptr_t y) { fiat_p256_mul((crypto_word_t*)out, (crypto_word_t*)x, (crypto_word_t*)y); }
 static inline void fe_sqr(uintptr_t out, uintptr_t x) { fiat_p256_square((crypto_word_t*)out, (crypto_word_t*)x); }
-static crypto_word_t fiat_p256_is_zero(const fiat_p256_felem x) {
-  crypto_word_t ret;
-  fiat_p256_nonzero(&ret, x);
-  return constant_time_is_zero_w(ret);
-}
-static crypto_word_t fiat_p256_nz(const fiat_p256_felem x) {
-  return x[0] | x[1] | x[2] | x[3];
-}
 
 static uintptr_t adc64(uintptr_t carry_in, uintptr_t l, uintptr_t r, uintptr_t *low_out) {
   fiat_p256_uint1 carry_out;
@@ -84,6 +76,18 @@ static void memcmov(uintptr_t d, uintptr_t s, uintptr_t n, uintptr_t mask) {
   constant_time_conditional_memcpy((void*)d, (void*)s, n, mask);
 }
 #endif
+
+static void br2_memcpy(uintptr_t d, uintptr_t s, uintptr_t n) {
+  OPENSSL_memcpy((void*)d, (void*)s, n);
+}
+
+static void br2_memset(uintptr_t d, uintptr_t v, uintptr_t n) {
+  OPENSSL_memset((void*)d, v, n);
+}
+
+static uintptr_t value_barrier(uintptr_t a) {
+  return value_barrier_w(a);
+}
 
 /////////////////////////////////
 
@@ -139,18 +143,43 @@ uintptr_t _br2_shamt(uintptr_t a) {
   return a&(sizeof(uintptr_t)*8-1);
 }
 
+static uintptr_t constant_time_msb(uintptr_t a) {
+  uintptr_t m;
+  m = (uintptr_t)((intptr_t)(a)>>_br2_shamt((uintptr_t)(UINTMAX_C(63))));
+  return m;
+}
+
+static uintptr_t constant_time_is_zero(uintptr_t a) {
+  uintptr_t z;
+  z = constant_time_msb((((uintptr_t)(UINTMAX_C(-1)))^(a))&((a)-((uintptr_t)(UINTMAX_C(1)))));
+  return z;
+}
+
+static uintptr_t fiat_p256_nz(uintptr_t x) {
+  uintptr_t nz;
+  nz = (((_br2_load(x, sizeof(uintptr_t)))|(_br2_load((x)+((uintptr_t)(UINTMAX_C(8))), sizeof(uintptr_t))))|(_br2_load((x)+((uintptr_t)(UINTMAX_C(16))), sizeof(uintptr_t))))|(_br2_load((x)+((uintptr_t)(UINTMAX_C(24))), sizeof(uintptr_t)));
+  return nz;
+}
+
+static uintptr_t fiat_p256_is_zero(uintptr_t x) {
+  uintptr_t z, nz;
+  nz = fiat_p256_nz(x);
+  z = constant_time_is_zero(nz);
+  return z;
+}
+
 static void fe_sub(uintptr_t out, uintptr_t x, uintptr_t y) {
-  uintptr_t x2, x4, x6, x8, x1, x11, x3, x13, x5, x17, x15, x7, x9, x10, x12, x14, x16;
+  uintptr_t x2, x4, x6, x8, x1, x11, x3, x13, x5, x15, x7, x9, x17, x10, x12, x14, x16;
   x2 = sbb64((uintptr_t)(UINTMAX_C(0)), _br2_load(x, sizeof(uintptr_t)), _br2_load(y, sizeof(uintptr_t)), &x1);
   x4 = sbb64(x2, _br2_load((x)+((uintptr_t)(UINTMAX_C(8))), sizeof(uintptr_t)), _br2_load((y)+((uintptr_t)(UINTMAX_C(8))), sizeof(uintptr_t)), &x3);
   x6 = sbb64(x4, _br2_load((x)+((uintptr_t)(UINTMAX_C(16))), sizeof(uintptr_t)), _br2_load((y)+((uintptr_t)(UINTMAX_C(16))), sizeof(uintptr_t)), &x5);
   x8 = sbb64(x6, _br2_load((x)+((uintptr_t)(UINTMAX_C(24))), sizeof(uintptr_t)), _br2_load((y)+((uintptr_t)(UINTMAX_C(24))), sizeof(uintptr_t)), &x7);
-  x9 = value_barrier_w(((uintptr_t)(UINTMAX_C(0)))-(x8));
+  x9 = ((uintptr_t)(UINTMAX_C(0)))-(x8);
   x11 = adc64((uintptr_t)(UINTMAX_C(0)), x1, x9, &x10);
   x13 = adc64(x11, x3, (x9)&((uintptr_t)(UINTMAX_C(4294967295))), &x12);
   x15 = adc64(x13, x5, (uintptr_t)(UINTMAX_C(0)), &x14);
   x17 = adc64(x15, x7, (x9)&((uintptr_t)(UINTMAX_C(18446744069414584321))), &x16);
-  (void)x17;
+  x17 = (x17)+((uintptr_t)(UINTMAX_C(0)));
   _br2_store(out, x10, sizeof(uintptr_t));
   _br2_store((out)+((uintptr_t)(UINTMAX_C(8))), x12, sizeof(uintptr_t));
   _br2_store((out)+((uintptr_t)(UINTMAX_C(16))), x14, sizeof(uintptr_t));
@@ -160,7 +189,7 @@ static void fe_sub(uintptr_t out, uintptr_t x, uintptr_t y) {
 
 static void fe_halve(uintptr_t y, uintptr_t x) {
   uintptr_t mh0, mh1, mh2, m, mh3, y0, y1, y2, y3, mmh;
-  m = value_barrier_w(((uintptr_t)(UINTMAX_C(0)))-((_br2_load(x, sizeof(uintptr_t)))&((uintptr_t)(UINTMAX_C(1)))));
+  m = value_barrier(((uintptr_t)(UINTMAX_C(0)))-((_br2_load(x, sizeof(uintptr_t)))&((uintptr_t)(UINTMAX_C(1)))));
   mh0 = (uintptr_t)(UINTMAX_C(-1));
   mh1 = (mh0)>>_br2_shamt((uintptr_t)(UINTMAX_C(33)));
   mh2 = (mh0)<<_br2_shamt((uintptr_t)(UINTMAX_C(63)));
@@ -188,9 +217,7 @@ static void fe_halve(uintptr_t y, uintptr_t x) {
 }
 
 static uintptr_t fiat_p256_point_add_affine_nz_nz_neq(uintptr_t out, uintptr_t in1, uintptr_t in2) {
-  uintptr_t ret = 0;
-
-  uintptr_t z1z1, Hsqr, u2, Hcub, r, h, s2;
+  uintptr_t z1z1, Hsqr, ok, different_x, different_y, u2, Hcub, r, h, s2;
   { uint8_t _br2_stackalloc_z1z1[(uintptr_t)(UINTMAX_C(32))] = {0}; z1z1 = (uintptr_t)&_br2_stackalloc_z1z1;
   { uint8_t _br2_stackalloc_u2[(uintptr_t)(UINTMAX_C(32))] = {0}; u2 = (uintptr_t)&_br2_stackalloc_u2;
   { uint8_t _br2_stackalloc_h[(uintptr_t)(UINTMAX_C(32))] = {0}; h = (uintptr_t)&_br2_stackalloc_h;
@@ -209,9 +236,9 @@ static uintptr_t fiat_p256_point_add_affine_nz_nz_neq(uintptr_t out, uintptr_t i
   fe_sqr(out, r);
   fe_mul(Hcub, Hsqr, h);
   fe_mul(u2, in1, Hsqr);
-
-  ret = fiat_p256_nz((void*)Hcub) | fiat_p256_nz((void*)out);
-
+  different_x = fiat_p256_nz(Hcub);
+  different_y = fiat_p256_nz(out);
+  ok = value_barrier((different_x)|(different_y));
   fe_sub(out, out, Hcub);
   fe_sub(out, out, u2);
   fe_sub(out, out, u2);
@@ -226,14 +253,11 @@ static uintptr_t fiat_p256_point_add_affine_nz_nz_neq(uintptr_t out, uintptr_t i
   }
   }
   }
-
-  return ret;
+  return ok;
 }
 
 static uintptr_t fiat_p256_point_add_nz_nz_neq(uintptr_t out, uintptr_t in1, uintptr_t in2) {
-  uintptr_t ret = 0;
-
-  uintptr_t z1z1, z2z2, u1, Hsqr, u2, Hcub, s1, r, h, s2;
+  uintptr_t z1z1, z2z2, u1, Hsqr, ok, different_x, different_y, u2, Hcub, s1, r, h, s2;
   { uint8_t _br2_stackalloc_z1z1[(uintptr_t)(UINTMAX_C(32))] = {0}; z1z1 = (uintptr_t)&_br2_stackalloc_z1z1;
   { uint8_t _br2_stackalloc_z2z2[(uintptr_t)(UINTMAX_C(32))] = {0}; z2z2 = (uintptr_t)&_br2_stackalloc_z2z2;
   { uint8_t _br2_stackalloc_u1[(uintptr_t)(UINTMAX_C(32))] = {0}; u1 = (uintptr_t)&_br2_stackalloc_u1;
@@ -260,9 +284,9 @@ static uintptr_t fiat_p256_point_add_nz_nz_neq(uintptr_t out, uintptr_t in1, uin
   fe_sqr(out, r);
   fe_mul(Hcub, Hsqr, h);
   fe_mul(u2, u1, Hsqr);
-
-  ret = fiat_p256_nz((void*)Hcub) | fiat_p256_nz((void*)out);
-
+  different_x = fiat_p256_nz(Hcub);
+  different_y = fiat_p256_nz(out);
+  ok = value_barrier((different_x)|(different_y));
   fe_sub(out, out, Hcub);
   fe_sub(out, out, u2);
   fe_sub(out, out, u2);
@@ -280,11 +304,10 @@ static uintptr_t fiat_p256_point_add_nz_nz_neq(uintptr_t out, uintptr_t in1, uin
   }
   }
   }
-
-  return ret;
+  return ok;
 }
 
-static void fiat_p256_point_double_impl(uintptr_t out, uintptr_t in1) {
+static void fiat_p256_point_double(uintptr_t out, uintptr_t in1) {
   uintptr_t t2, tmp, A, D;
   { uint8_t _br2_stackalloc_D[(uintptr_t)(UINTMAX_C(32))] = {0}; D = (uintptr_t)&_br2_stackalloc_D;
   { uint8_t _br2_stackalloc_A[(uintptr_t)(UINTMAX_C(32))] = {0}; A = (uintptr_t)&_br2_stackalloc_A;
@@ -316,40 +339,40 @@ static void fiat_p256_point_double_impl(uintptr_t out, uintptr_t in1) {
   return;
 }
 
-static void fiat_p256_point_add_affine_conditional(uintptr_t out, uintptr_t in1, uintptr_t in2, uintptr_t c) {
-  uintptr_t p_out, p1zero, p2zero, t;
-  p1zero = fiat_p256_is_zero((void*)(((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32)))));
+static void fiat_p256_point_add_affine_nz_nnteq_conditional(uintptr_t out, uintptr_t in1, uintptr_t in2, uintptr_t c) {
+  uintptr_t ok, p_out, p1zero, p2zero, t;
+  p1zero = fiat_p256_is_zero(((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))));
   p2zero = constant_time_is_zero_w(c);
   { uint8_t _br2_stackalloc_p_out[(uintptr_t)(UINTMAX_C(96))] = {0}; p_out = (uintptr_t)&_br2_stackalloc_p_out;
-  fiat_p256_point_add_affine_nz_nz_neq(p_out, in1, in2);
+  ok = fiat_p256_point_add_affine_nz_nz_neq(p_out, in1, in2);
+  ok = ((p1zero)|(p2zero))|(ok);
   { uint8_t _br2_stackalloc_t[(uintptr_t)(UINTMAX_C(96))] = {0}; t = (uintptr_t)&_br2_stackalloc_t;
-  OPENSSL_memset((void*)t, (uintptr_t)(UINTMAX_C(0)), ((uintptr_t)(UINTMAX_C(3)))*((uintptr_t)(UINTMAX_C(32))));
+  br2_memset(t, (uintptr_t)(UINTMAX_C(0)), ((uintptr_t)(UINTMAX_C(3)))*((uintptr_t)(UINTMAX_C(32))));
   memcxor(t, p_out, ((uintptr_t)(UINTMAX_C(3)))*((uintptr_t)(UINTMAX_C(32))), (((uintptr_t)(UINTMAX_C(-1)))^(p1zero))&(((uintptr_t)(UINTMAX_C(-1)))^(p2zero)));
   memcxor(t, in1, ((uintptr_t)(UINTMAX_C(3)))*((uintptr_t)(UINTMAX_C(32))), (((uintptr_t)(UINTMAX_C(-1)))^(p1zero))&(p2zero));
-  memcxor(t, in2, (uintptr_t)(UINTMAX_C(32)), (p1zero)&(((uintptr_t)(UINTMAX_C(-1)))^(p2zero)));
-  memcxor((t)+((uintptr_t)(UINTMAX_C(32))), (in2)+((uintptr_t)(UINTMAX_C(32))), (uintptr_t)(UINTMAX_C(32)), (p1zero)&(((uintptr_t)(UINTMAX_C(-1)))^(p2zero)));
-  memcxor(((t)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))), (uintptr_t)&fiat_p256_one, (uintptr_t)(UINTMAX_C(32)), (p1zero)&(((uintptr_t)(UINTMAX_C(-1)))^(p2zero)));
-  memcpy((void*)out, (void*)t, (uintptr_t)(UINTMAX_C(96)));
+  memcxor(t, in2, ((uintptr_t)(UINTMAX_C(3)))*((uintptr_t)(UINTMAX_C(32))), (p1zero)&(((uintptr_t)(UINTMAX_C(-1)))^(p2zero)));
+  br2_memcpy(out, t, (uintptr_t)(UINTMAX_C(96)));
   }
   }
   return;
 }
 
-static void fiat_p256_point_add_impl(uintptr_t out, uintptr_t in1, uintptr_t in2) {
-  uintptr_t p_out, p1zero, p2zero, t;
-  p1zero = fiat_p256_is_zero((void*)(((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32)))));
-  p2zero = fiat_p256_is_zero((void*)(((in2)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32)))));
+static uintptr_t fiat_p256_point_add_nnteq(uintptr_t out, uintptr_t in1, uintptr_t in2) {
+  uintptr_t ok, p_out, p1zero, p2zero, t;
+  p1zero = fiat_p256_is_zero(((in1)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))));
+  p2zero = fiat_p256_is_zero(((in2)+((uintptr_t)(UINTMAX_C(32))))+((uintptr_t)(UINTMAX_C(32))));
   { uint8_t _br2_stackalloc_p_out[(uintptr_t)(UINTMAX_C(96))] = {0}; p_out = (uintptr_t)&_br2_stackalloc_p_out;
-  fiat_p256_point_add_nz_nz_neq(p_out, in1, in2);
+  ok = fiat_p256_point_add_nz_nz_neq(p_out, in1, in2);
+  ok = ((p1zero)|(p2zero))|(ok);
   { uint8_t _br2_stackalloc_t[(uintptr_t)(UINTMAX_C(96))] = {0}; t = (uintptr_t)&_br2_stackalloc_t;
-  OPENSSL_memset((void*)t, (uintptr_t)(UINTMAX_C(0)), ((uintptr_t)(UINTMAX_C(3)))*((uintptr_t)(UINTMAX_C(32))));
+  br2_memset(t, (uintptr_t)(UINTMAX_C(0)), ((uintptr_t)(UINTMAX_C(3)))*((uintptr_t)(UINTMAX_C(32))));
   memcxor(t, p_out, (uintptr_t)(UINTMAX_C(96)), (((uintptr_t)(UINTMAX_C(-1)))^(p1zero))&(((uintptr_t)(UINTMAX_C(-1)))^(p2zero)));
   memcxor(t, in1, (uintptr_t)(UINTMAX_C(96)), (((uintptr_t)(UINTMAX_C(-1)))^(p1zero))&(p2zero));
   memcxor(t, in2, (uintptr_t)(UINTMAX_C(96)), (p1zero)&(((uintptr_t)(UINTMAX_C(-1)))^(p2zero)));
-  OPENSSL_memcpy((void*)out, (void*)t, (uintptr_t)(UINTMAX_C(96)));
+  br2_memcpy(out, t, (uintptr_t)(UINTMAX_C(96)));
   }
   }
-  return;
+  return ok;
 }
 
 ////////////////////////////////////
@@ -453,58 +476,14 @@ static void fiat_p256_inv_square(fiat_p256_felem out,
   fiat_p256_square(out, ret);  // 2^256 - 2^224 + 2^192 + 2^96 - 2^2
 }
 
-// Group operations
-// ----------------
-//
-// Building on top of the field operations we have the operations on the
-// elliptic curve group itself. Points on the curve are represented in Jacobian
-// coordinates.
-
-// Outputs can equal corresponding inputs, i.e., x_out == x_in is allowed.
-// while x_out == y_in is not (maybe this works, but it's not tested).
-
-// Addition operation was transcribed to Coq and proven to correspond to naive
-// implementations using Affine coordinates, for all suitable fields.  In the
-// Coq proofs, issues of constant-time execution and memory layout (aliasing)
-// conventions were not considered. Specification of affine coordinates:
-// <https://github.com/mit-plv/fiat-crypto/blob/79f8b5f39ed609339f0233098dee1a3c4e6b3080/src/Spec/WeierstrassCurve.v#L28>
-// As a sanity check, a proof that these points form a commutative group:
-// <https://github.com/mit-plv/fiat-crypto/blob/79f8b5f39ed609339f0233098dee1a3c4e6b3080/src/Curves/Weierstrass/AffineProofs.v#L33>
-
-static void fiat_p256_point_double(fiat_p256_felem out[3],
-                                   const fiat_p256_felem in[3]) {
-  return fiat_p256_point_double_impl((uintptr_t)out, (uintptr_t)in);
-}
-
-// returns -1 and incorrect output if the input points are equal and nonzero.
-static crypto_word_t fiat_p256_point_add_nnteq(fiat_p256_felem out[3],
-                                               const fiat_p256_felem in1[3],
-                                               const fiat_p256_felem in2[3]) {
-  crypto_word_t p1zero = fiat_p256_is_zero(in1[2]);
-  crypto_word_t p2zero = fiat_p256_is_zero(in2[2]);
-  fiat_p256_felem p_out[3];
-  crypto_word_t doubling = constant_time_is_zero_w(fiat_p256_point_add_nz_nz_neq((uintptr_t)p_out, (uintptr_t)in1, (uintptr_t)in2));
-  fiat_p256_felem t[3] = {{0}, {0}, {0}};
-  constant_time_conditional_memxor(t, p_out, sizeof(t), ~p1zero & ~p2zero);
-  constant_time_conditional_memxor(t, in1,   sizeof(t), ~p1zero &  p2zero);
-  constant_time_conditional_memxor(t, in2,   sizeof(t),  p1zero & ~p2zero);
-  OPENSSL_memcpy(out, t, sizeof(t));
-  return doubling & ~(p1zero | p2zero); // nontrivial doubling, wrong output
-}
-
-static void fiat_p256_point_add(fiat_p256_felem out[3],
-                                const fiat_p256_felem in1[3],
-                                const fiat_p256_felem in2[3]) {
-  fiat_p256_point_add_impl((uintptr_t)out, (uintptr_t)in1, (uintptr_t)in2);
-}
 
 static void fiat_p256_point_add_nz(fiat_p256_felem out[3],
                                    const fiat_p256_felem in1[3],
                                    const fiat_p256_felem in2[3]) {
   fiat_p256_felem t[3];
   OPENSSL_memcpy(t, in1, sizeof(t));
-  if (!value_barrier_w(fiat_p256_point_add_nz_nz_neq((uintptr_t)out, (uintptr_t)t, (uintptr_t)in2))) {
-    fiat_p256_point_double_impl((uintptr_t)out, (uintptr_t)in1);
+  if (!fiat_p256_point_add_nz_nz_neq((uintptr_t)out, (uintptr_t)t, (uintptr_t)in2)) {
+    fiat_p256_point_double((uintptr_t)out, (uintptr_t)in1);
   }
 }
 
@@ -513,8 +492,8 @@ static void fiat_p256_point_add_affine_nz(fiat_p256_felem out[3],
                                           const fiat_p256_felem in2[2]) {
   fiat_p256_felem t[3];
   OPENSSL_memcpy(t, in1, sizeof(t));
-  if (!value_barrier_w(fiat_p256_point_add_affine_nz_nz_neq((uintptr_t)out, (uintptr_t)t, (uintptr_t)in2))) {
-    fiat_p256_point_double_impl((uintptr_t)out, (uintptr_t)in1);
+  if (!fiat_p256_point_add_affine_nz_nz_neq((uintptr_t)out, (uintptr_t)t, (uintptr_t)in2)) {
+    fiat_p256_point_double((uintptr_t)out, (uintptr_t)in1);
   }
 }
 
@@ -642,9 +621,9 @@ static void p256_point_mul(fiat_p256_felem out[3], const fiat_p256_felem p[3],
   OPENSSL_memcpy(p_pre_comp[0], p, sizeof(p_pre_comp[0]));
   for (size_t j = 2; j <= 16; ++j) {
     if (j & 1) {
-      fiat_p256_point_add(p_pre_comp[j-1], p_pre_comp[j-2], p_pre_comp[0]);
+      fiat_p256_point_add_nnteq((uintptr_t)p_pre_comp[j-1], (uintptr_t)p_pre_comp[j-2], (uintptr_t)p_pre_comp[0]);
     } else {
-      fiat_p256_point_double(p_pre_comp[j-1], p_pre_comp[(j-1) / 2]);
+      fiat_p256_point_double((uintptr_t)p_pre_comp[j-1], (uintptr_t)p_pre_comp[(j-1) / 2]);
     }
   }
 
@@ -654,7 +633,7 @@ static void p256_point_mul(fiat_p256_felem out[3], const fiat_p256_felem p[3],
   for (size_t i = 51; i < 52; i--) {
     if (!ret_is_zero) {
       for (size_t k = 4; k < 5; k--) {
-        fiat_p256_point_double(ret, ret);
+        fiat_p256_point_double((uintptr_t)ret, (uintptr_t)ret);
       }
     }
 
@@ -671,7 +650,7 @@ static void p256_point_mul(fiat_p256_felem out[3], const fiat_p256_felem p[3],
     fiat_p256_opp_conditional(t[1], sign);
 
     if (!ret_is_zero) {
-      fiat_p256_point_add(ret, ret, t);
+      fiat_p256_point_add_nnteq((uintptr_t)ret, (uintptr_t)ret, (uintptr_t)t);
     } else {
       OPENSSL_memcpy(ret, t, sizeof(ret));
       ret_is_zero = 0;
@@ -737,13 +716,13 @@ static void ec_GFp_nistp256_point_mul_public(const EC_GROUP *group,
 
   fiat_p256_felem alignas(32) p_pre_comp[1 << (4 - 1)][3];
   fiat_p256_from_generic(p_pre_comp[0][2], &p->Z);
-  if (!fiat_p256_is_zero(p_pre_comp[0][2])) {
+  if (!fiat_p256_is_zero((uintptr_t)p_pre_comp[0][2])) {
     ec_compute_wNAF(group, p_wNAF, ps, 256, 4);
     // Precompute multiples of |p|. p_pre_comp[i] is (2*i+1) * |p|.
     fiat_p256_from_generic(p_pre_comp[0][0], &p->X);
     fiat_p256_from_generic(p_pre_comp[0][1], &p->Y);
     fiat_p256_felem alignas(32) p2[3];
-    fiat_p256_point_double(p2, p_pre_comp[0]);
+    fiat_p256_point_double((uintptr_t)p2, (uintptr_t)p_pre_comp[0]);
     for (size_t i = 1; i < OPENSSL_ARRAY_SIZE(p_pre_comp); i++) {
       fiat_p256_point_add_nz_nz_neq((uintptr_t)p_pre_comp[i], (uintptr_t)p_pre_comp[i - 1], (uintptr_t)p2);
     }
@@ -753,7 +732,7 @@ static void ec_GFp_nistp256_point_mul_public(const EC_GROUP *group,
   int ret_is_zero = 1;  // Save some point operations, avoid 0+Q
   for (int i = 256; i >= 0; i--) {
     if (!ret_is_zero) {
-      fiat_p256_point_double(ret, ret);
+      fiat_p256_point_double((uintptr_t)ret, (uintptr_t)ret);
     }
 
     if (i <= 31) {
@@ -767,7 +746,7 @@ static void ec_GFp_nistp256_point_mul_public(const EC_GROUP *group,
         if (bits != 0) {
           if (!ret_is_zero) {
             fiat_p256_point_add_affine_nz(ret, ret, fiat_p256_g_pre_comp[j][bits-1]);
-	    ret_is_zero = fiat_p256_is_zero(ret[2]);
+	    ret_is_zero = fiat_p256_is_zero((uintptr_t)ret[2]);
           } else {
             OPENSSL_memcpy(ret, fiat_p256_g_pre_comp[j][bits-1], sizeof(fiat_p256_g_pre_comp[j][bits-1]));
             OPENSSL_memcpy(ret[2], fiat_p256_one, sizeof(ret[2]));
@@ -788,7 +767,7 @@ static void ec_GFp_nistp256_point_mul_public(const EC_GROUP *group,
       }
       if (!ret_is_zero) {
         fiat_p256_point_add_nz(ret, ret, t);
-	ret_is_zero = fiat_p256_is_zero(ret[2]);
+	ret_is_zero = fiat_p256_is_zero((uintptr_t)ret[2]);
       } else {
         OPENSSL_memcpy(ret, t, sizeof(ret));
         ret_is_zero = 0;
@@ -814,7 +793,7 @@ static void p256_point_mul_base(fiat_p256_felem ret[3], const uint8_t s[32]) {
   int ret_is_zero = 1;  // Save two point operations in the first round.
   for (size_t i = 31; i < 32; i--) {
     if (!ret_is_zero) {
-      fiat_p256_point_double(ret, ret);
+      fiat_p256_point_double((uintptr_t)ret, (uintptr_t)ret);
     }
 #pragma clang loop unroll(full)
     for (size_t j = 1; j < 2; j--) {
@@ -823,11 +802,12 @@ static void p256_point_mul_base(fiat_p256_felem ret[3], const uint8_t s[32]) {
       for (size_t k = 3; k < 4; k--) {
         bits |= bit(s, i + 32 * j + 64 * k) << k;
       }
-      fiat_p256_felem alignas(32) t[2];
+      fiat_p256_felem alignas(32) t[3];
+      OPENSSL_memcpy(t[2], &fiat_p256_one, sizeof(fiat_p256_one));
       fiat_p256_select_point_affine_15(t, fiat_p256_g_pre_comp[j], bits-1);
 
       if (!ret_is_zero) {
-        fiat_p256_point_add_affine_conditional((uintptr_t)ret, (uintptr_t)ret, (uintptr_t)t, (uintptr_t)bits);
+        fiat_p256_point_add_affine_nz_nnteq_conditional((uintptr_t)ret, (uintptr_t)ret, (uintptr_t)t, (uintptr_t)bits);
       } else {
         OPENSSL_memcpy(ret, t, sizeof(t));
         fiat_p256_conditional_zero_or_one(ret[2], bits);
@@ -1082,9 +1062,9 @@ static void ec_GFp_nistp256_add(const EC_GROUP *group, EC_JACOBIAN *r,
   fiat_p256_from_generic(q[0], &b->X);
   fiat_p256_from_generic(q[1], &b->Y);
   fiat_p256_from_generic(q[2], &b->Z);
-  crypto_word_t nontrivial_doubling = fiat_p256_point_add_nnteq(p, p, q);
+  crypto_word_t nontrivial_doubling = fiat_p256_point_add_nnteq((uintptr_t)p, (uintptr_t)p, (uintptr_t)q);
   if (constant_time_declassify_w(nontrivial_doubling)) {
-    fiat_p256_point_double(p, q);
+    fiat_p256_point_double((uintptr_t)p, (uintptr_t)q);
   }
   fiat_p256_to_generic(&r->X, p[0]);
   fiat_p256_to_generic(&r->Y, p[1]);
@@ -1097,7 +1077,7 @@ static void ec_GFp_nistp256_dbl(const EC_GROUP *group, EC_JACOBIAN *r,
   fiat_p256_from_generic(p[0], &a->X);
   fiat_p256_from_generic(p[1], &a->Y);
   fiat_p256_from_generic(p[2], &a->Z);
-  fiat_p256_point_double(p, p);
+  fiat_p256_point_double((uintptr_t)p, (uintptr_t)p);
   fiat_p256_to_generic(&r->X, p[0]);
   fiat_p256_to_generic(&r->Y, p[1]);
   fiat_p256_to_generic(&r->Z, p[2]);
