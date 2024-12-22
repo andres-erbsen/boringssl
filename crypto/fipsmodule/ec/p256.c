@@ -593,6 +593,8 @@ static void fiat_p256_select_point_affine_15(
 
 static void p256_point_mul_base(fiat_p256_felem ret[3], const uint8_t s[32]) {
   int ret_is_zero = 1;  // Save two point operations in the first round.
+  fiat_p256_felem alignas(32) t[3];
+  OPENSSL_memcpy(t[2], &fiat_p256_one, sizeof(fiat_p256_one));
   for (size_t i = 31; i < 32; i--) {
     if (!ret_is_zero) {
       fiat_p256_point_double((uintptr_t)ret, (uintptr_t)ret);
@@ -604,8 +606,6 @@ static void p256_point_mul_base(fiat_p256_felem ret[3], const uint8_t s[32]) {
       for (size_t k = 3; k < 4; k--) {
         bits |= bit(s, i + 32 * j + 64 * k) << k;
       }
-      fiat_p256_felem alignas(32) t[3];
-      OPENSSL_memcpy(t[2], &fiat_p256_one, sizeof(fiat_p256_one));
       fiat_p256_select_point_affine_15(t, fiat_p256_g_pre_comp[j], bits-1);
 
       if (!ret_is_zero) {
@@ -646,14 +646,12 @@ typedef fiat_p256_felem _p256_affine_table_point[2];
 typedef _p256_affine_table_point PRECOMP256_ROW[64];
 #include "p256-nistz-table.h"
 
-__attribute__((noinline))
 static void fiat_p256_select_point_affine_16(fiat_p256_felem dst[2],
                                              const fiat_p256_felem src[16][2],
                                              size_t i) {
   fiat_p256_select_point_affine(dst, src, i, 16);
 }
 
-__attribute__((noinline))
 static void fiat_p256_select_point_affine_64(fiat_p256_felem dst[2],
                                              const fiat_p256_felem src[64][2],
                                              size_t i) {
@@ -672,6 +670,8 @@ static crypto_word_t booth_recode_w7(crypto_word_t in) {
 
 static void p256_point_mul_base(fiat_p256_felem ret[3], const uint8_t s[32]) {
   int ret_is_zero = 1;
+  alignas(32) fiat_p256_felem t[3];
+  OPENSSL_memcpy(t[2], &fiat_p256_one, sizeof(fiat_p256_one));
   for (size_t i = 36; i < 37; i--) {
     crypto_word_t wvalue;
     if (!i) {
@@ -681,7 +681,6 @@ static void p256_point_mul_base(fiat_p256_felem ret[3], const uint8_t s[32]) {
       wvalue = (crypto_word_t)s[bi] | (bi < 31 ? s[bi + 1] : 0) << 8;
       wvalue = booth_recode_w7((wvalue >> (((int)i*7 - 1) % 8)) & ((1<<(7+1))-1));
     }
-    alignas(32) fiat_p256_felem t[2];
     if (i==36) {
       fiat_p256_select_point_affine_16(t, ecp_nistz256_precomputed[i], (wvalue>>1)-1);
     } else {
