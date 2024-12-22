@@ -47,7 +47,9 @@ static const fiat_p256_felem fiat_p256_one = {
 #error "Must define either OPENSSL_32_BIT or OPENSSL_64_BIT"
 #endif
 
-/////////////////////////////////
+
+// BEDROCK2 BUILDING BLOCKS
+
 
 static inline void fe_add(uintptr_t out, uintptr_t x, uintptr_t y) { fiat_p256_add((crypto_word_t*)out, (crypto_word_t*)x, (crypto_word_t*)y); }
 static inline void fe_mul(uintptr_t out, uintptr_t x, uintptr_t y) { fiat_p256_mul((crypto_word_t*)out, (crypto_word_t*)x, (crypto_word_t*)y); }
@@ -89,7 +91,9 @@ static uintptr_t value_barrier(uintptr_t a) {
   return value_barrier_w(a);
 }
 
-/////////////////////////////////
+
+// BEDROCK2 GENERATED CODE
+
 
 // We use memcpy to work around -fstrict-aliasing.
 // A plain memcpy is enough on clang 10, but not on gcc 10, which fails
@@ -375,7 +379,9 @@ static uintptr_t fiat_p256_point_add_nnteq(uintptr_t out, uintptr_t in1, uintptr
   return ok;
 }
 
-////////////////////////////////////
+
+// POINT OPERATIONS
+
 
 static void fiat_p256_opp_conditional(fiat_p256_felem x, crypto_word_t c) {
   fiat_p256_felem alignas(32) n;
@@ -386,191 +392,6 @@ static void fiat_p256_opp_conditional(fiat_p256_felem x, crypto_word_t c) {
   fiat_p256_cmovznz_u64(&x[3], c, x[3], n[3]);
 }
 
-static void fiat_p256_conditional_zero_or_one(fiat_p256_felem x,
-                                              crypto_word_t c) {
-  OPENSSL_memset(x, 0, sizeof(fiat_p256_felem));
-  constant_time_conditional_memcpy(x, fiat_p256_one, sizeof(fiat_p256_one), ~constant_time_is_zero_w(c));
-}
-
-static void fiat_p256_from_words(fiat_p256_felem out,
-                                 const BN_ULONG in[32 / sizeof(BN_ULONG)]) {
-  OPENSSL_memcpy(out, in, 32);
-}
-
-static void fiat_p256_from_generic(fiat_p256_felem out, const EC_FELEM *in) {
-  fiat_p256_from_words(out, in->words);
-}
-
-static void fiat_p256_to_generic(EC_FELEM *out, const fiat_p256_felem in) {
-  OPENSSL_memcpy(out->words, in, 32);
-}
-
-// fiat_p256_inv_square calculates |out| = |in|^{-2}
-//
-// Based on Fermat's Little Theorem:
-//   a^p = a (mod p)
-//   a^{p-1} = 1 (mod p)
-//   a^{p-3} = a^{-2} (mod p)
-static void fiat_p256_inv_square(fiat_p256_felem out,
-                                 const fiat_p256_felem in) {
-  // This implements the addition chain described in
-  // https://briansmith.org/ecc-inversion-addition-chains-01#p256_field_inversion
-  fiat_p256_felem x2, x3, x6, x12, x15, x30, x32;
-  fiat_p256_square(x2, in);   // 2^2 - 2^1
-  fiat_p256_mul(x2, x2, in);  // 2^2 - 2^0
-
-  fiat_p256_square(x3, x2);   // 2^3 - 2^1
-  fiat_p256_mul(x3, x3, in);  // 2^3 - 2^0
-
-  fiat_p256_square(x6, x3);
-  for (int i = 1; i < 3; i++) {
-    fiat_p256_square(x6, x6);
-  }                           // 2^6 - 2^3
-  fiat_p256_mul(x6, x6, x3);  // 2^6 - 2^0
-
-  fiat_p256_square(x12, x6);
-  for (int i = 1; i < 6; i++) {
-    fiat_p256_square(x12, x12);
-  }                             // 2^12 - 2^6
-  fiat_p256_mul(x12, x12, x6);  // 2^12 - 2^0
-
-  fiat_p256_square(x15, x12);
-  for (int i = 1; i < 3; i++) {
-    fiat_p256_square(x15, x15);
-  }                             // 2^15 - 2^3
-  fiat_p256_mul(x15, x15, x3);  // 2^15 - 2^0
-
-  fiat_p256_square(x30, x15);
-  for (int i = 1; i < 15; i++) {
-    fiat_p256_square(x30, x30);
-  }                              // 2^30 - 2^15
-  fiat_p256_mul(x30, x30, x15);  // 2^30 - 2^0
-
-  fiat_p256_square(x32, x30);
-  fiat_p256_square(x32, x32);   // 2^32 - 2^2
-  fiat_p256_mul(x32, x32, x2);  // 2^32 - 2^0
-
-  fiat_p256_felem ret;
-  fiat_p256_square(ret, x32);
-  for (int i = 1; i < 31 + 1; i++) {
-    fiat_p256_square(ret, ret);
-  }                             // 2^64 - 2^32
-  fiat_p256_mul(ret, ret, in);  // 2^64 - 2^32 + 2^0
-
-  for (int i = 0; i < 96 + 32; i++) {
-    fiat_p256_square(ret, ret);
-  }                              // 2^192 - 2^160 + 2^128
-  fiat_p256_mul(ret, ret, x32);  // 2^192 - 2^160 + 2^128 + 2^32 - 2^0
-
-  for (int i = 0; i < 32; i++) {
-    fiat_p256_square(ret, ret);
-  }                              // 2^224 - 2^192 + 2^160 + 2^64 - 2^32
-  fiat_p256_mul(ret, ret, x32);  // 2^224 - 2^192 + 2^160 + 2^64 - 2^0
-
-  for (int i = 0; i < 30; i++) {
-    fiat_p256_square(ret, ret);
-  }                              // 2^254 - 2^222 + 2^190 + 2^94 - 2^30
-  fiat_p256_mul(ret, ret, x30);  // 2^254 - 2^222 + 2^190 + 2^94 - 2^0
-
-  fiat_p256_square(ret, ret);
-  fiat_p256_square(out, ret);  // 2^256 - 2^224 + 2^192 + 2^96 - 2^2
-}
-
-
-static void fiat_p256_point_add_nz(fiat_p256_felem out[3],
-                                   const fiat_p256_felem in1[3],
-                                   const fiat_p256_felem in2[3]) {
-  fiat_p256_felem t[3];
-  OPENSSL_memcpy(t, in1, sizeof(t));
-  if (!fiat_p256_point_add_nz_nz_neq((uintptr_t)out, (uintptr_t)t, (uintptr_t)in2)) {
-    fiat_p256_point_double((uintptr_t)out, (uintptr_t)in1);
-  }
-}
-
-static void fiat_p256_point_add_affine_nz(fiat_p256_felem out[3],
-                                          const fiat_p256_felem in1[3],
-                                          const fiat_p256_felem in2[2]) {
-  fiat_p256_felem t[3];
-  OPENSSL_memcpy(t, in1, sizeof(t));
-  if (!fiat_p256_point_add_affine_nz_nz_neq((uintptr_t)out, (uintptr_t)t, (uintptr_t)in2)) {
-    fiat_p256_point_double((uintptr_t)out, (uintptr_t)in1);
-  }
-}
-
-// constant_time_table_select copies to |dst| from |src| the |i|th out of |n|
-// |s|-byte elements, without leaking |i| through timing. Specialized versions
-// |constant_time_table_select_64|, |constant_time_table_select_96| are faster.
-inline
-static void constant_time_table_select(uint8_t *dst, const uint8_t *src,
-                                       size_t i, size_t n, size_t s) {
-  assert(!buffers_alias(dst, s, src, n*s));
-  if (buffers_alias(dst, s, src, n*s)) {
-    __builtin_unreachable();
-  }
-  OPENSSL_memset(dst, 0, s);
-#pragma clang loop unroll_count(4)
-  for (size_t j = 0; j < n; j++) {
-    constant_time_conditional_memxor(dst, &src[j*s], s, constant_time_eq_w(i, j));
-  }
-}
-
-// constant_time_table_select_64 copies to |dst| from |src| the |i|th out of
-// |n| 64-byte elements, without leaking |i| through timing.
-__attribute__((always_inline))
-static void constant_time_table_select_64(uint8_t *dst, const uint8_t *src,
-                                          size_t i, size_t n) {
-  static const size_t s = 64;
-  uint8_t t[64] = {0};
-#pragma clang loop unroll_count(8)
-  for (size_t j = 0; j < n; j++) {
-    constant_time_conditional_memxor(t, &src[j*s], s, constant_time_eq_w(i, j));
-  }
-  OPENSSL_memcpy(dst, t, s);
-}
-
-// constant_time_table_select_96 copies to |dst| from |src| the |i|th out of
-// |n| 96-byte elements, without leaking |i| through timing.
-__attribute__((always_inline))
-static void constant_time_table_select_96(uint8_t *dst, const uint8_t *src,
-                                          size_t i, size_t n) {
-  static const size_t s = 96;
-  uint8_t t[96] = {0};
-#pragma clang loop unroll_count(4)
-  for (size_t j = 0; j < n; j++) {
-    constant_time_conditional_memxor(t, &src[j*s], s, constant_time_eq_w(i, j));
-  }
-  OPENSSL_memcpy(dst, t, s);
-}
-
-#include "./p256_table.h"
-
-// fiat_p256_select_point_affine selects the |i|th point from a precomputation
-// table and copies it to |dst|. If |n<=i|, the dstput is (0, 0).
-__attribute__((always_inline))
-static void fiat_p256_select_point_affine(
-    fiat_p256_felem dst[2], const fiat_p256_felem src[/*n*/][2],
-    size_t i, size_t n) {
-  static_assert(sizeof(src[0]) == 64, "");
-  constant_time_table_select_64((uint8_t*)dst, (uint8_t*)src, i, n);
-}
-
-// fiat_p256_select_point selects the |i|th point from a precomputation table
-// and copies it to |dst|.
-__attribute__((always_inline))
-static void fiat_p256_select_point(fiat_p256_felem dst[3],
-                                   const fiat_p256_felem src[/*n*/][3],
-                                   size_t i, size_t n) {
-  static_assert(sizeof(src[0]) == 96, "");
-  constant_time_table_select_96((uint8_t*)dst, (uint8_t*)src, i, n);
-}
-
-__attribute__((noinline))
-static void fiat_p256_select_point_16(fiat_p256_felem dst[3],
-                                      const fiat_p256_felem src[16][3],
-                                      size_t i) {
-  fiat_p256_select_point(dst, src, i, 16);
-}
-
 // bit returns the |i|th bit in |in|.
 static crypto_word_t bit(const uint8_t *in, int i) {
   if (i < 0 || i >= 256) {
@@ -579,40 +400,20 @@ static crypto_word_t bit(const uint8_t *in, int i) {
   return (in[i >> 3] >> (i & 7)) & 1;
 }
 
-// OPENSSL EC_METHOD FUNCTIONS
-
-// Takes the Jacobian coordinates (X, Y, Z) of a point and returns (X', Y') =
-// (X/Z^2, Y/Z^3).
-static int ec_GFp_nistp256_point_get_affine_coordinates(
-    const EC_GROUP *group, const EC_JACOBIAN *point, EC_FELEM *x_out,
-    EC_FELEM *y_out) {
-  if (constant_time_declassify_int(
-          ec_GFp_simple_is_at_infinity(group, point))) {
-    OPENSSL_PUT_ERROR(EC, EC_R_POINT_AT_INFINITY);
-    return 0;
+// point multiplication
+static void fiat_p256_select_point_16(fiat_p256_felem dst_[3],
+                                      const fiat_p256_felem src_[16][3],
+                                      size_t i) {
+  uint8_t *dst = (uint8_t*)dst_;
+  const uint8_t *src = (uint8_t*)src_;
+  static const size_t n = 16;
+  static const size_t s = 96;
+  uint8_t t[96] = {0};
+#pragma clang loop unroll_count(4)
+  for (size_t j = 0; j < n; j++) {
+    constant_time_conditional_memxor(t, &src[j*s], s, constant_time_eq_w(i, j));
   }
-
-  fiat_p256_felem z1, z2;
-  fiat_p256_from_generic(z1, &point->Z);
-  fiat_p256_inv_square(z2, z1);
-
-  if (x_out != NULL) {
-    fiat_p256_felem x;
-    fiat_p256_from_generic(x, &point->X);
-    fiat_p256_mul(x, x, z2);
-    fiat_p256_to_generic(x_out, x);
-  }
-
-  if (y_out != NULL) {
-    fiat_p256_felem y;
-    fiat_p256_from_generic(y, &point->Y);
-    fiat_p256_square(z2, z2);  // z^-4
-    fiat_p256_mul(y, y, z1);   // y * z
-    fiat_p256_mul(y, y, z2);   // y * z^-3
-    fiat_p256_to_generic(y_out, y);
-  }
-
-  return 1;
+  OPENSSL_memcpy(dst, t, s);
 }
 
 static void p256_point_mul(fiat_p256_felem out[3], const fiat_p256_felem p[3],
@@ -660,50 +461,27 @@ static void p256_point_mul(fiat_p256_felem out[3], const fiat_p256_felem p[3],
   OPENSSL_memcpy(out, ret, sizeof(ret));
 }
 
-static int ec_GFp_nistp256_cmp_x_coordinate(const EC_GROUP *group,
-                                            const EC_JACOBIAN *p,
-                                            const EC_SCALAR *r) {
-  if (ec_GFp_simple_is_at_infinity(group, p)) {
-    return 0;
+// point_mul_public
+#include "./p256_table.h"
+
+static void fiat_p256_point_add_nz_nz_public(fiat_p256_felem out[3],
+                                   const fiat_p256_felem in1[3],
+                                   const fiat_p256_felem in2[3]) {
+  fiat_p256_felem t[3];
+  OPENSSL_memcpy(t, in1, sizeof(t));
+  if (!fiat_p256_point_add_nz_nz_neq((uintptr_t)out, (uintptr_t)t, (uintptr_t)in2)) {
+    fiat_p256_point_double((uintptr_t)out, (uintptr_t)in1);
   }
+}
 
-  // We wish to compare X/Z^2 with r. This is equivalent to comparing X with
-  // r*Z^2. Note that X and Z are represented in Montgomery form, while r is
-  // not.
-  fiat_p256_felem Z2_mont;
-  fiat_p256_from_generic(Z2_mont, &p->Z);
-  fiat_p256_mul(Z2_mont, Z2_mont, Z2_mont);
-
-  fiat_p256_felem r_Z2;
-  fiat_p256_from_words(r_Z2, r->words);  // r < order < p, so this is valid.
-  fiat_p256_mul(r_Z2, r_Z2, Z2_mont);
-
-  fiat_p256_felem X;
-  fiat_p256_from_generic(X, &p->X);
-  fiat_p256_from_montgomery(X, X);
-
-  if (OPENSSL_memcmp(&r_Z2, &X, sizeof(r_Z2)) == 0) {
-    return 1;
+static void fiat_p256_point_add_affine_nz_nz_public(fiat_p256_felem out[3],
+                                          const fiat_p256_felem in1[3],
+                                          const fiat_p256_felem in2[2]) {
+  fiat_p256_felem t[3];
+  OPENSSL_memcpy(t, in1, sizeof(t));
+  if (!fiat_p256_point_add_affine_nz_nz_neq((uintptr_t)out, (uintptr_t)t, (uintptr_t)in2)) {
+    fiat_p256_point_double((uintptr_t)out, (uintptr_t)in1);
   }
-
-  // During signing the x coefficient is reduced modulo the group order.
-  // Therefore there is a small possibility, less than 1/2^128, that group_order
-  // < p.x < P. in that case we need not only to compare against |r| but also to
-  // compare against r+group_order.
-  assert(group->field.N.width == group->order.N.width);
-  EC_FELEM tmp;
-  BN_ULONG carry =
-      bn_add_words(tmp.words, r->words, group->order.N.d, group->field.N.width);
-  if (carry == 0 &&
-      bn_less_than_words(tmp.words, group->field.N.d, group->field.N.width)) {
-    fiat_p256_from_generic(r_Z2, &tmp);
-    fiat_p256_mul(r_Z2, r_Z2, Z2_mont);
-    if (OPENSSL_memcmp(&r_Z2, &X, sizeof(r_Z2)) == 0) {
-      return 1;
-    }
-  }
-
-  return 0;
 }
 
 static void ec_GFp_nistp256_point_mul_public(const EC_GROUP *group,
@@ -715,12 +493,12 @@ static void ec_GFp_nistp256_point_mul_public(const EC_GROUP *group,
   int8_t p_wNAF[257] = {0};
 
   fiat_p256_felem alignas(32) p_pre_comp[1 << (4 - 1)][3];
-  fiat_p256_from_generic(p_pre_comp[0][2], &p->Z);
+  OPENSSL_memcpy(p_pre_comp[0][2], &p->Z, 32);
   if (!fiat_p256_is_zero((uintptr_t)p_pre_comp[0][2])) {
     ec_compute_wNAF(group, p_wNAF, ps, 256, 4);
     // Precompute multiples of |p|. p_pre_comp[i] is (2*i+1) * |p|.
-    fiat_p256_from_generic(p_pre_comp[0][0], &p->X);
-    fiat_p256_from_generic(p_pre_comp[0][1], &p->Y);
+    OPENSSL_memcpy(p_pre_comp[0][0], &p->X, 32);
+    OPENSSL_memcpy(p_pre_comp[0][1], &p->Y, 32);
     fiat_p256_felem alignas(32) p2[3];
     fiat_p256_point_double((uintptr_t)p2, (uintptr_t)p_pre_comp[0]);
     for (size_t i = 1; i < OPENSSL_ARRAY_SIZE(p_pre_comp); i++) {
@@ -745,7 +523,7 @@ static void ec_GFp_nistp256_point_mul_public(const EC_GROUP *group,
         }
         if (bits != 0) {
           if (!ret_is_zero) {
-            fiat_p256_point_add_affine_nz(ret, ret, fiat_p256_g_pre_comp[j][bits-1]);
+            fiat_p256_point_add_affine_nz_nz_public(ret, ret, fiat_p256_g_pre_comp[j][bits-1]);
 	    ret_is_zero = fiat_p256_is_zero((uintptr_t)ret[2]);
           } else {
             OPENSSL_memcpy(ret, fiat_p256_g_pre_comp[j][bits-1], sizeof(fiat_p256_g_pre_comp[j][bits-1]));
@@ -766,7 +544,7 @@ static void ec_GFp_nistp256_point_mul_public(const EC_GROUP *group,
         fiat_p256_opp(t[1], t[1]);
       }
       if (!ret_is_zero) {
-        fiat_p256_point_add_nz(ret, ret, t);
+        fiat_p256_point_add_nz_nz_public(ret, ret, t);
 	ret_is_zero = fiat_p256_is_zero((uintptr_t)ret[2]);
       } else {
         OPENSSL_memcpy(ret, t, sizeof(ret));
@@ -775,9 +553,33 @@ static void ec_GFp_nistp256_point_mul_public(const EC_GROUP *group,
     }
   }
 
-  fiat_p256_to_generic(&r->X, ret[0]);
-  fiat_p256_to_generic(&r->Y, ret[1]);
-  fiat_p256_to_generic(&r->Z, ret[2]);
+  OPENSSL_memcpy(&r->X, ret[0], 32);
+  OPENSSL_memcpy(&r->Y, ret[1], 32);
+  OPENSSL_memcpy(&r->Z, ret[2], 32);
+}
+
+// p256_point_mul_base (small and full)
+
+// fiat_p256_select_point_affine selects the |i|th point from a precomputation
+// table and copies it to |dst|. If |n<=i|, the dstput is (0, 0).
+static void fiat_p256_select_point_affine(
+    fiat_p256_felem dst_[2], const fiat_p256_felem src_[/*n*/][2],
+    size_t i, size_t n) {
+  uint8_t *dst = (uint8_t*)dst_;
+  const uint8_t *src = (uint8_t*)src_;
+  static const size_t s = 64;
+  uint8_t t[64] = {0};
+#pragma clang loop unroll_count(8)
+  for (size_t j = 0; j < n; j++) {
+    constant_time_conditional_memxor(t, &src[j*s], s, constant_time_eq_w(i, j));
+  }
+  OPENSSL_memcpy(dst, t, s);
+}
+
+static void fiat_p256_conditional_zero_or_one(fiat_p256_felem x,
+                                              crypto_word_t c) {
+  OPENSSL_memset(x, 0, sizeof(fiat_p256_felem));
+  constant_time_conditional_memcpy(x, fiat_p256_one, sizeof(fiat_p256_one), ~constant_time_is_zero_w(c));
 }
 
 #if defined(OPENSSL_SMALL)
@@ -888,7 +690,7 @@ static void p256_point_mul_base(fiat_p256_felem ret[3], const uint8_t s[32]) {
     fiat_p256_opp_conditional(t[1], wvalue & 1);
 
     if (!ret_is_zero) {
-      fiat_p256_point_add_affine_conditional((uintptr_t)ret, (uintptr_t)ret, (uintptr_t)t, wvalue>>1);
+      fiat_p256_point_add_affine_nz_nnteq_conditional((uintptr_t)ret, (uintptr_t)ret, (uintptr_t)t, wvalue>>1);
     } else {
       OPENSSL_memcpy(ret, t, sizeof(t));
       fiat_p256_conditional_zero_or_one(ret[2], wvalue >> 1);
@@ -898,6 +700,85 @@ static void p256_point_mul_base(fiat_p256_felem ret[3], const uint8_t s[32]) {
 }
 
 #endif // !OPENSSL_SMALL
+
+
+// FIELD-ELEMENT INVERSION
+
+
+// fiat_p256_inv_square calculates |out| = |in|^{-2}
+//
+// Based on Fermat's Little Theorem:
+//   a^p = a (mod p)
+//   a^{p-1} = 1 (mod p)
+//   a^{p-3} = a^{-2} (mod p)
+static void fiat_p256_inv_square(fiat_p256_felem out,
+                                 const fiat_p256_felem in) {
+  // This implements the addition chain described in
+  // https://briansmith.org/ecc-inversion-addition-chains-01#p256_field_inversion
+  fiat_p256_felem x2, x3, x6, x12, x15, x30, x32;
+  fiat_p256_square(x2, in);   // 2^2 - 2^1
+  fiat_p256_mul(x2, x2, in);  // 2^2 - 2^0
+
+  fiat_p256_square(x3, x2);   // 2^3 - 2^1
+  fiat_p256_mul(x3, x3, in);  // 2^3 - 2^0
+
+  fiat_p256_square(x6, x3);
+  for (int i = 1; i < 3; i++) {
+    fiat_p256_square(x6, x6);
+  }                           // 2^6 - 2^3
+  fiat_p256_mul(x6, x6, x3);  // 2^6 - 2^0
+
+  fiat_p256_square(x12, x6);
+  for (int i = 1; i < 6; i++) {
+    fiat_p256_square(x12, x12);
+  }                             // 2^12 - 2^6
+  fiat_p256_mul(x12, x12, x6);  // 2^12 - 2^0
+
+  fiat_p256_square(x15, x12);
+  for (int i = 1; i < 3; i++) {
+    fiat_p256_square(x15, x15);
+  }                             // 2^15 - 2^3
+  fiat_p256_mul(x15, x15, x3);  // 2^15 - 2^0
+
+  fiat_p256_square(x30, x15);
+  for (int i = 1; i < 15; i++) {
+    fiat_p256_square(x30, x30);
+  }                              // 2^30 - 2^15
+  fiat_p256_mul(x30, x30, x15);  // 2^30 - 2^0
+
+  fiat_p256_square(x32, x30);
+  fiat_p256_square(x32, x32);   // 2^32 - 2^2
+  fiat_p256_mul(x32, x32, x2);  // 2^32 - 2^0
+
+  fiat_p256_felem ret;
+  fiat_p256_square(ret, x32);
+  for (int i = 1; i < 31 + 1; i++) {
+    fiat_p256_square(ret, ret);
+  }                             // 2^64 - 2^32
+  fiat_p256_mul(ret, ret, in);  // 2^64 - 2^32 + 2^0
+
+  for (int i = 0; i < 96 + 32; i++) {
+    fiat_p256_square(ret, ret);
+  }                              // 2^192 - 2^160 + 2^128
+  fiat_p256_mul(ret, ret, x32);  // 2^192 - 2^160 + 2^128 + 2^32 - 2^0
+
+  for (int i = 0; i < 32; i++) {
+    fiat_p256_square(ret, ret);
+  }                              // 2^224 - 2^192 + 2^160 + 2^64 - 2^32
+  fiat_p256_mul(ret, ret, x32);  // 2^224 - 2^192 + 2^160 + 2^64 - 2^0
+
+  for (int i = 0; i < 30; i++) {
+    fiat_p256_square(ret, ret);
+  }                              // 2^254 - 2^222 + 2^190 + 2^94 - 2^30
+  fiat_p256_mul(ret, ret, x30);  // 2^254 - 2^222 + 2^190 + 2^94 - 2^0
+
+  fiat_p256_square(ret, ret);
+  fiat_p256_square(out, ret);  // 2^256 - 2^224 + 2^192 + 2^96 - 2^2
+}
+
+
+// ARITHMETIC MODULO CURVE ORDER
+
 
 #if !defined(OPENSSL_NO_ASM) && \
     (defined(OPENSSL_X86_64) || defined(OPENSSL_AARCH64))
@@ -1029,6 +910,98 @@ static int ecp_nistz256_scalar_to_montgomery_inv_vartime(const EC_GROUP *group,
 
 #endif /* !defined(OPENSSL_NO_ASM) && \
           (defined(OPENSSL_X86_64) || defined(OPENSSL_AARCH64)) */
+
+
+// OPENSSL EC_METHOD WRAPPERS
+
+
+static void fiat_p256_from_generic(fiat_p256_felem out, const EC_FELEM *in) {
+  OPENSSL_memcpy(out, in->words, 32);
+}
+
+static void fiat_p256_to_generic(EC_FELEM *out, const fiat_p256_felem in) {
+  OPENSSL_memcpy(out->words, in, 32);
+}
+
+// Takes the Jacobian coordinates (X, Y, Z) of a point and returns (X', Y') =
+// (X/Z^2, Y/Z^3).
+static int ec_GFp_nistp256_point_get_affine_coordinates(
+    const EC_GROUP *group, const EC_JACOBIAN *point, EC_FELEM *x_out,
+    EC_FELEM *y_out) {
+  if (constant_time_declassify_int(
+          ec_GFp_simple_is_at_infinity(group, point))) {
+    OPENSSL_PUT_ERROR(EC, EC_R_POINT_AT_INFINITY);
+    return 0;
+  }
+
+  fiat_p256_felem z1, z2;
+  fiat_p256_from_generic(z1, &point->Z);
+  fiat_p256_inv_square(z2, z1);
+
+  if (x_out != NULL) {
+    fiat_p256_felem x;
+    fiat_p256_from_generic(x, &point->X);
+    fiat_p256_mul(x, x, z2);
+    fiat_p256_to_generic(x_out, x);
+  }
+
+  if (y_out != NULL) {
+    fiat_p256_felem y;
+    fiat_p256_from_generic(y, &point->Y);
+    fiat_p256_square(z2, z2);  // z^-4
+    fiat_p256_mul(y, y, z1);   // y * z
+    fiat_p256_mul(y, y, z2);   // y * z^-3
+    fiat_p256_to_generic(y_out, y);
+  }
+
+  return 1;
+}
+
+static int ec_GFp_nistp256_cmp_x_coordinate(const EC_GROUP *group,
+                                            const EC_JACOBIAN *p,
+                                            const EC_SCALAR *r) {
+  if (ec_GFp_simple_is_at_infinity(group, p)) {
+    return 0;
+  }
+
+  // We wish to compare X/Z^2 with r. This is equivalent to comparing X with
+  // r*Z^2. Note that X and Z are represented in Montgomery form, while r is
+  // not.
+  fiat_p256_felem Z2_mont;
+  fiat_p256_from_generic(Z2_mont, &p->Z);
+  fiat_p256_mul(Z2_mont, Z2_mont, Z2_mont);
+
+  fiat_p256_felem r_Z2;
+  OPENSSL_memcpy(r_Z2, r->words, 32);  // r < order < p, so this is valid.
+  fiat_p256_mul(r_Z2, r_Z2, Z2_mont);
+
+  fiat_p256_felem X;
+  fiat_p256_from_generic(X, &p->X);
+  fiat_p256_from_montgomery(X, X);
+
+  if (OPENSSL_memcmp(&r_Z2, &X, sizeof(r_Z2)) == 0) {
+    return 1;
+  }
+
+  // During signing the x coefficient is reduced modulo the group order.
+  // Therefore there is a small possibility, less than 1/2^128, that group_order
+  // < p.x < P. in that case we need not only to compare against |r| but also to
+  // compare against r+group_order.
+  assert(group->field.N.width == group->order.N.width);
+  EC_FELEM tmp;
+  BN_ULONG carry =
+      bn_add_words(tmp.words, r->words, group->order.N.d, group->field.N.width);
+  if (carry == 0 &&
+      bn_less_than_words(tmp.words, group->field.N.d, group->field.N.width)) {
+    fiat_p256_from_generic(r_Z2, &tmp);
+    fiat_p256_mul(r_Z2, r_Z2, Z2_mont);
+    if (OPENSSL_memcmp(&r_Z2, &X, sizeof(r_Z2)) == 0) {
+      return 1;
+    }
+  }
+
+  return 0;
+}
 
 static void ec_GFp_nistp256_point_mul(const EC_GROUP *group, EC_JACOBIAN *r,
                                       const EC_JACOBIAN *p,
