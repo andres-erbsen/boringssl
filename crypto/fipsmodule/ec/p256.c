@@ -49,9 +49,24 @@ static const fiat_p256_felem fiat_p256_one = {
 // BEDROCK2 BUILDING BLOCKS
 
 
-static inline void fe_add(uintptr_t out, uintptr_t x, uintptr_t y) { fiat_p256_add((crypto_word_t*)out, (crypto_word_t*)x, (crypto_word_t*)y); }
 static inline void fe_mul(uintptr_t out, uintptr_t x, uintptr_t y) { fiat_p256_mul((crypto_word_t*)out, (crypto_word_t*)x, (crypto_word_t*)y); }
 static inline void fe_sqr(uintptr_t out, uintptr_t x) { fiat_p256_square((crypto_word_t*)out, (crypto_word_t*)x); }
+
+static inline uintptr_t cmov64(uintptr_t c, uint64_t vnz, uint64_t vz) {
+#if defined(__x86_64__) && defined(__clang__) && __clang_major__ == 16 && clang_minor__ == 0
+  return c ? vnz : vz; // generates cmov and keeps condition flag
+#elif !defined(OPENSSL_NO_ASM) && defined(__GNUC__) && defined(__x86_64__)
+  __asm__ (
+      "test%z[c] %[c], %[c]\n"
+      "cmovz%z[vz] %[vz], %[vnz]"
+      : [vnz] "+r"(vnz)
+      : [vz] "r"(vz)
+      , [c] "r"(c)
+      : "cc");
+  return vnz;
+#endif
+  return constant_time_select_w(constant_time_is_zero_w(c), vnz, vz);
+}
 
 static uintptr_t adc64(uintptr_t carry_in, uintptr_t l, uintptr_t r, uintptr_t *low_out) {
   fiat_p256_uint1 carry_out;
@@ -93,6 +108,50 @@ static uintptr_t declassify(uintptr_t a) {
   return constant_time_declassify_w(a);
 }
 
+static void fe_add(uintptr_t r, uintptr_t a, uintptr_t b) {
+  uint64_t* out1 = (uint64_t*)r;
+  const uint64_t* arg1 = (const uint64_t*)a;
+  const uint64_t* arg2 = (const uint64_t*)b;
+  uint64_t x1;
+  fiat_p256_uint1 x2;
+  uint64_t x3;
+  fiat_p256_uint1 x4;
+  uint64_t x5;
+  fiat_p256_uint1 x6;
+  uint64_t x7;
+  fiat_p256_uint1 x8;
+  uint64_t x9;
+  fiat_p256_uint1 x10;
+  uint64_t x11;
+  fiat_p256_uint1 x12;
+  uint64_t x13;
+  fiat_p256_uint1 x14;
+  uint64_t x15;
+  fiat_p256_uint1 x16;
+  uint64_t x17;
+  fiat_p256_uint1 x18;
+  uint64_t x19;
+  uint64_t x20;
+  uint64_t x21;
+  uint64_t x22;
+  fiat_p256_addcarryx_u64(&x1, &x2, 0x0, (arg1[0]), (arg2[0]));
+  fiat_p256_addcarryx_u64(&x3, &x4, x2, (arg1[1]), (arg2[1]));
+  fiat_p256_addcarryx_u64(&x5, &x6, x4, (arg1[2]), (arg2[2]));
+  fiat_p256_addcarryx_u64(&x7, &x8, x6, (arg1[3]), (arg2[3]));
+  fiat_p256_subborrowx_u64(&x9, &x10, 0x0, x1, UINT64_C(0xffffffffffffffff));
+  fiat_p256_subborrowx_u64(&x11, &x12, x10, x3, UINT32_C(0xffffffff));
+  fiat_p256_subborrowx_u64(&x13, &x14, x12, x5, 0x0);
+  fiat_p256_subborrowx_u64(&x15, &x16, x14, x7, UINT64_C(0xffffffff00000001));
+  fiat_p256_subborrowx_u64(&x17, &x18, x16, x8, 0x0);
+  x19 = cmov64(x18, x1, x9);
+  x20 = cmov64(x18, x3, x11);
+  x21 = cmov64(x18, x5, x13);
+  x22 = cmov64(x18, x7, x15);
+  out1[0] = x19;
+  out1[1] = x20;
+  out1[2] = x21;
+  out1[3] = x22;
+}
 
 // BEDROCK2 GENERATED CODE
 
@@ -399,10 +458,10 @@ void p256_point_add(uintptr_t out, uintptr_t in1, uintptr_t in2) {
 static void fiat_p256_opp_conditional(fiat_p256_felem x, crypto_word_t c) {
   fiat_p256_felem alignas(32) n;
   fiat_p256_opp(n, x);
-  fiat_p256_cmovznz_u64(&x[0], c, x[0], n[0]);
-  fiat_p256_cmovznz_u64(&x[1], c, x[1], n[1]);
-  fiat_p256_cmovznz_u64(&x[2], c, x[2], n[2]);
-  fiat_p256_cmovznz_u64(&x[3], c, x[3], n[3]);
+  x[0] = cmov64(c, n[0], x[0]);
+  x[1] = cmov64(c, n[1], x[1]);
+  x[2] = cmov64(c, n[2], x[2]);
+  x[3] = cmov64(c, n[3], x[3]);
 }
 
 // bit returns the |i|th bit in |in|.
