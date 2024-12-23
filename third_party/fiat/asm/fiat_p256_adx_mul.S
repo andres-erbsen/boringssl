@@ -142,6 +142,7 @@ movq %r11, %r12
 sbbq %r14, %r12
 movq %r13, %rbx
 sbbq %r9, %rbx
+movq %rax, %rax
 movq %r8, %rax
 sbbq %rdx, %rax
 sbbq %r9, %rcx

@@ -64,7 +64,6 @@ set(
   crypto/fipsmodule/ec/felem.c
   crypto/fipsmodule/ec/oct.c
   crypto/fipsmodule/ec/p224-64.c
-  crypto/fipsmodule/ec/p256-nistz.c
   crypto/fipsmodule/ec/p256.c
   crypto/fipsmodule/ec/scalar.c
   crypto/fipsmodule/ec/simple.c
@@ -622,8 +621,8 @@ set(
   crypto/fipsmodule/digest/md32_common.h
   crypto/fipsmodule/ec/builtin_curves.h
   crypto/fipsmodule/ec/internal.h
+  crypto/fipsmodule/ec/p256-internal.h
   crypto/fipsmodule/ec/p256-nistz-table.h
-  crypto/fipsmodule/ec/p256-nistz.h
   crypto/fipsmodule/ec/p256_table.h
   crypto/fipsmodule/ecdsa/internal.h
   crypto/fipsmodule/md5/internal.h
@@ -734,7 +733,6 @@ set(
   crypto/fipsmodule/bn/bn_test.cc
   crypto/fipsmodule/cmac/cmac_test.cc
   crypto/fipsmodule/ec/ec_test.cc
-  crypto/fipsmodule/ec/p256-nistz_test.cc
   crypto/fipsmodule/ec/p256_test.cc
   crypto/fipsmodule/ecdsa/ecdsa_test.cc
   crypto/fipsmodule/hkdf/hkdf_test.cc
@@ -833,7 +831,7 @@ set(
   crypto/fipsmodule/cmac/cavp_aes192_cmac_tests.txt
   crypto/fipsmodule/cmac/cavp_aes256_cmac_tests.txt
   crypto/fipsmodule/ec/ec_scalar_base_mult_tests.txt
-  crypto/fipsmodule/ec/p256-nistz_tests.txt
+  crypto/fipsmodule/ec/p256-tests.txt
   crypto/fipsmodule/ecdsa/ecdsa_sign_tests.txt
   crypto/fipsmodule/ecdsa/ecdsa_verify_tests.txt
   crypto/fipsmodule/modes/gcm_tests.txt

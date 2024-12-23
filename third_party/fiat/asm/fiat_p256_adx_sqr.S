@@ -3,13 +3,7 @@
 #if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && \
     (defined(__APPLE__) || defined(__ELF__))
 
-.A:
-.quad 0xffffffff00000001
-.B:
-.quad 0x100000000
-.C:
-.quad 0xffffffff
-.align 32
+.text
 #if defined(__APPLE__)
 .private_extern _fiat_p256_adx_sqr
 .global _fiat_p256_adx_sqr
@@ -28,16 +22,16 @@ pushq %rbp
 .cfi_offset rbp, -16
 movq %rsp, %rbp
 movq (%rsi), %rdx
+mulxq 0x18(%rsi), %rax, %r10
 mulxq %rdx, %r11, %rcx
+mulxq 0x8(%rsi), %r8, %r9
 movq %rbx, -0x80(%rsp)
 .cfi_offset rbx, -16-0x80
-mulxq 0x8(%rsi), %r8, %r9
 xorq %rbx, %rbx
+adoxq %r8, %r8
 movq %r12, -0x78(%rsp)
 .cfi_offset r12, -16-0x78
 mulxq 0x10(%rsi), %rbx, %r12
-adoxq %r8, %r8
-mulxq 0x18(%rsi), %rax, %r10
 movq 0x8(%rsi), %rdx
 movq %r13, -0x70(%rsp)
 .cfi_offset r13, -16-0x70
@@ -66,20 +60,20 @@ mulxq 0x18(%rsi), %r9, %r12
 adcxq %r11, %r9
 adcxq %rdi, %r12
 mulxq %rdx, %r10, %r11
-adoxq %r9, %r9
-movq 0x18(%rsi), %rdx
-adoxq %r12, %r12
 clc
 adcxq %r8, %rcx
 adcxq %rbx, %r13
 adcxq %rax, %r14
+adoxq %r9, %r9
 adcxq %r15, %r10
+movq 0x18(%rsi), %rdx
 mulxq %rdx, %r8, %rbx
-movq .B(%rip), %rdx
+adoxq %r12, %r12
 adcxq %r9, %r11
 movq -0x50(%rsp), %rsi
 adcxq %r12, %r8
-nop
+movq $0x100000000, %rax
+movq %rax, %rdx
 mulxq %rsi, %rax, %r15
 adcxq %rdi, %rbx
 adoxq %rdi, %rbx
@@ -89,7 +83,7 @@ adoxq %r13, %r15
 mulxq %rax, %rdi, %rcx
 adcxq %r15, %rdi
 adoxq %r14, %rcx
-movq .A(%rip), %rdx
+movq $0xffffffff00000001, %rdx
 mulxq %rsi, %r13, %r14
 adoxq %r10, %r14
 adcxq %rcx, %r13
@@ -104,7 +98,7 @@ movq %r9, %rax
 adcxq %r11, %rax
 movq %r9, %r15
 adoxq %rbx, %r15
-movq .B(%rip), %rdx
+movq $0x100000000, %rdx
 mulxq %rdi, %rbx, %rcx
 movq %r9, %r14
 adcxq %r15, %r14
@@ -113,7 +107,7 @@ adoxq %r12, %r12
 adcxq %r9, %r12
 adoxq %r13, %rbx
 mulxq %rbx, %r13, %r11
-movq .A(%rip), %r15
+movq $0xffffffff00000001, %r15
 movq %r15, %rdx
 mulxq %rbx, %r15, %rsi
 adoxq %r10, %rcx
@@ -133,23 +127,23 @@ adcxq %r9, %rdi
 decq %r9
 movq %r13, %rbx
 subq %r9, %rbx
-movl %r9d, %r9d
+movq $0xffffffff, %rcx
 movq %r10, %r11
-sbbq %r9, %r11
+sbbq %rcx, %r11
 movq %r15, %r8
 sbbq %rax, %r8
 movq %r14, %rsi
 sbbq %rdx, %rsi
-movq -0x58(%rsp), %r12
 sbbq %rax, %rdi
 cmovcq %r13, %rbx
 cmovcq %r15, %r8
 cmovcq %r10, %r11
 cmovcq %r14, %rsi
-movq %rbx, (%r12)
-movq %r11, 0x8(%r12)
-movq %rsi, 0x18(%r12)
-movq %r8, 0x10(%r12)
+movq -0x58(%rsp), %rdi
+movq %rsi, 0x18(%rdi)
+movq %rbx, (%rdi)
+movq %r11, 0x8(%rdi)
+movq %r8, 0x10(%rdi)
 movq -0x80(%rsp), %rbx
 .cfi_restore rbx
 movq -0x78(%rsp), %r12

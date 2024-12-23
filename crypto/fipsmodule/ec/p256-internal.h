@@ -23,11 +23,23 @@
 
 #include <openssl/bn.h>
 
-#include "../bn/internal.h"
+#include "../../internal.h"
 
 #if defined(__cplusplus)
 extern "C" {
 #endif
+
+#define P256_LIMBS (32 / sizeof(crypto_word_t))
+typedef crypto_word_t fiat_p256_felem[P256_LIMBS];
+
+void fiat_p256_opp(fiat_p256_felem out, const fiat_p256_felem in1);
+void fiat_p256_mul(fiat_p256_felem out, const fiat_p256_felem in1, const fiat_p256_felem in2);
+void fiat_p256_square(fiat_p256_felem out, const fiat_p256_felem in1);
+void fiat_p256_from_montgomery(fiat_p256_felem out, const fiat_p256_felem in1);
+
+void p256_point_add(uintptr_t out, uintptr_t in1, uintptr_t in2);
+void p256_point_add_affine_conditional(uintptr_t ret, uintptr_t p, uintptr_t q_aff, uintptr_t c);
+void p256_point_double(uintptr_t out, uintptr_t in1);
 
 // P-256 scalar operations.
 //
