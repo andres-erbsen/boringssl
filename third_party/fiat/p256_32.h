@@ -159,7 +159,7 @@ static FIAT_P256_FIAT_INLINE void fiat_p256_cmovznz_u32(uint32_t* out1, fiat_p25
  *   0 ≤ eval out1 < m
  *
  */
-static FIAT_P256_FIAT_INLINE void fiat_p256_mul(fiat_p256_montgomery_domain_field_element out1, const fiat_p256_montgomery_domain_field_element arg1, const fiat_p256_montgomery_domain_field_element arg2) {
+FIAT_P256_FIAT_INLINE void fiat_p256_mul(fiat_p256_montgomery_domain_field_element out1, const fiat_p256_montgomery_domain_field_element arg1, const fiat_p256_montgomery_domain_field_element arg2) {
   uint32_t x1;
   uint32_t x2;
   uint32_t x3;
@@ -1194,7 +1194,7 @@ static FIAT_P256_FIAT_INLINE void fiat_p256_mul(fiat_p256_montgomery_domain_fiel
  *   0 ≤ eval out1 < m
  *
  */
-static FIAT_P256_FIAT_INLINE void fiat_p256_square(fiat_p256_montgomery_domain_field_element out1, const fiat_p256_montgomery_domain_field_element arg1) {
+FIAT_P256_FIAT_INLINE void fiat_p256_square(fiat_p256_montgomery_domain_field_element out1, const fiat_p256_montgomery_domain_field_element arg1) {
   uint32_t x1;
   uint32_t x2;
   uint32_t x3;
@@ -2390,7 +2390,7 @@ static FIAT_P256_FIAT_INLINE void fiat_p256_sub(fiat_p256_montgomery_domain_fiel
  *   0 ≤ eval out1 < m
  *
  */
-static FIAT_P256_FIAT_INLINE void fiat_p256_opp(fiat_p256_montgomery_domain_field_element out1, const fiat_p256_montgomery_domain_field_element arg1) {
+FIAT_P256_FIAT_INLINE void fiat_p256_opp(fiat_p256_montgomery_domain_field_element out1, const fiat_p256_montgomery_domain_field_element arg1) {
   uint32_t x1;
   fiat_p256_uint1 x2;
   uint32_t x3;
@@ -2461,7 +2461,7 @@ static FIAT_P256_FIAT_INLINE void fiat_p256_opp(fiat_p256_montgomery_domain_fiel
  *   0 ≤ eval out1 < m
  *
  */
-static FIAT_P256_FIAT_INLINE void fiat_p256_from_montgomery(fiat_p256_non_montgomery_domain_field_element out1, const fiat_p256_montgomery_domain_field_element arg1) {
+FIAT_P256_FIAT_INLINE void fiat_p256_from_montgomery(fiat_p256_non_montgomery_domain_field_element out1, const fiat_p256_montgomery_domain_field_element arg1) {
   uint32_t x1;
   uint32_t x2;
   uint32_t x3;

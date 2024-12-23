@@ -35,16 +35,11 @@
 #else
 #include "../../../third_party/fiat/p256_64_msvc.h"
 #endif
-static const fiat_p256_felem fiat_p256_one = {0x1, 0xffffffff00000000,
-                                              0xffffffffffffffff, 0xfffffffe};
 #elif defined(OPENSSL_32_BIT)
 #include "../../../third_party/fiat/p256_32.h"
-static const fiat_p256_felem fiat_p256_one = {
-    0x1, 0x0, 0x0, 0xffffffff, 0xffffffff, 0xffffffff, 0xfffffffe, 0x0};
 #else
 #error "Must define either OPENSSL_32_BIT or OPENSSL_64_BIT"
 #endif
-
 
 // BEDROCK2 BUILDING BLOCKS
 
@@ -52,22 +47,46 @@ static const fiat_p256_felem fiat_p256_one = {
 static inline void fe_mul(uintptr_t out, uintptr_t x, uintptr_t y) { fiat_p256_mul((crypto_word_t*)out, (crypto_word_t*)x, (crypto_word_t*)y); }
 static inline void fe_sqr(uintptr_t out, uintptr_t x) { fiat_p256_square((crypto_word_t*)out, (crypto_word_t*)x); }
 
-static inline uintptr_t cmov64(uintptr_t c, uint64_t vnz, uint64_t vz) {
-#if defined(__x86_64__) && defined(__clang__) && __clang_major__ == 16 && clang_minor__ == 0
+static uintptr_t value_barrier(uintptr_t a) {
+  return value_barrier_w(a);
+}
+
+static uintptr_t declassify(uintptr_t a) {
+  return constant_time_declassify_w(a);
+}
+
+static inline uintptr_t nonzero(uintptr_t a) {
+  return (intptr_t)(a|-a)>>(8*sizeof(a)-1);
+}
+
+static inline uintptr_t cmov(uintptr_t c, uintptr_t vnz, uintptr_t vz) {
+#if defined(__clang__) && __clang_major__ == 16 && clang_minor__ == 0 && \
+    defined(__x86_64__)
   return c ? vnz : vz; // generates cmov and keeps condition flag
 #elif !defined(OPENSSL_NO_ASM) && defined(__GNUC__) && defined(__x86_64__)
   __asm__ (
-      "test%z[c] %[c], %[c]\n"
-      "cmovz%z[vz] %[vz], %[vnz]"
+      "testq %[c], %[c]\n"
+      "cmovzq %[vz], %[vnz]"
+      : [vnz] "+r"(vnz)
+      : [vz] "r"(vz)
+      , [c] "r"(c)
+      : "cc");
+  return vnz;
+#elif !defined(OPENSSL_NO_ASM) && defined(__GNUC__) && defined(__i386__)
+  __asm__ (
+      "testl %[c], %[c]\n" // test%z[c] gives "invalid operand" on clang 16.0.6
+      "cmovzl %[vz], %[vnz]"
       : [vnz] "+r"(vnz)
       : [vz] "r"(vz)
       , [c] "r"(c)
       : "cc");
   return vnz;
 #endif
-  return constant_time_select_w(constant_time_is_zero_w(c), vnz, vz);
+  uintptr_t m = value_barrier(nonzero(c));
+  return (m&vnz) | (~m&vz);
 }
 
+#if defined(OPENSSL_64_BIT)
 static uintptr_t adc64(uintptr_t carry_in, uintptr_t l, uintptr_t r, uintptr_t *low_out) {
   fiat_p256_uint1 carry_out;
   fiat_p256_addcarryx_u64(low_out, &carry_out, carry_in, l, r);
@@ -78,9 +97,14 @@ static uintptr_t sbb64(uintptr_t carry_in, uintptr_t l, uintptr_t r, uintptr_t *
   fiat_p256_subborrowx_u64(low_out, &carry_out, carry_in, l, r);
   return carry_out;
 }
-static inline uint64_t shrd_64(uint64_t lo, uint64_t hi, uint64_t n) {
+static inline uintptr_t shrd(uintptr_t lo, uintptr_t hi, uintptr_t n) {
   return (((uint128_t)hi << 64) | (uint128_t)lo) >> (n&63);
 }
+#else
+static inline uintptr_t shrd(uintptr_t lo, uintptr_t hi, uintptr_t n) {
+  return (((uint64_t)hi << 32) | (uint64_t)lo) >> (n&31);
+}
+#endif
 
 static void memcxor(uintptr_t d, uintptr_t s, uintptr_t n, uintptr_t mask) {
   constant_time_conditional_memxor((void*)d, (void*)s, n, mask);
@@ -100,14 +124,7 @@ static void br2_memset(uintptr_t d, uintptr_t v, uintptr_t n) {
   OPENSSL_memset((void*)d, v, n);
 }
 
-static uintptr_t value_barrier(uintptr_t a) {
-  return value_barrier_w(a);
-}
-
-static uintptr_t declassify(uintptr_t a) {
-  return constant_time_declassify_w(a);
-}
-
+#if defined(OPENSSL_64_BIT)
 static void fe_add(uintptr_t r, uintptr_t a, uintptr_t b) {
   uint64_t* out1 = (uint64_t*)r;
   const uint64_t* arg1 = (const uint64_t*)a;
@@ -143,15 +160,21 @@ static void fe_add(uintptr_t r, uintptr_t a, uintptr_t b) {
   fiat_p256_subborrowx_u64(&x13, &x14, x12, x5, 0x0);
   fiat_p256_subborrowx_u64(&x15, &x16, x14, x7, UINT64_C(0xffffffff00000001));
   fiat_p256_subborrowx_u64(&x17, &x18, x16, x8, 0x0);
-  x19 = cmov64(x18, x1, x9);
-  x20 = cmov64(x18, x3, x11);
-  x21 = cmov64(x18, x5, x13);
-  x22 = cmov64(x18, x7, x15);
+  x19 = cmov(x18, x1, x9);
+  x20 = cmov(x18, x3, x11);
+  x21 = cmov(x18, x5, x13);
+  x22 = cmov(x18, x7, x15);
   out1[0] = x19;
   out1[1] = x20;
   out1[2] = x21;
   out1[3] = x22;
 }
+#else
+static void fe_add(uintptr_t r, uintptr_t a, uintptr_t b) {
+  fiat_p256_add((void*)r, (void*)a, (void*)b);
+}
+#endif
+
 
 // BEDROCK2 GENERATED CODE
 
@@ -233,6 +256,7 @@ static uintptr_t fiat_p256_is_zero(uintptr_t x) {
   return z;
 }
 
+#if defined(OPENSSL_64_BIT)
 static void fe_sub(uintptr_t out, uintptr_t x, uintptr_t y) {
   uintptr_t x2, x4, x6, x8, x1, x11, x3, x13, x5, x15, x7, x9, x17, x10, x12, x14, x16;
   x2 = sbb64((uintptr_t)(UINTMAX_C(0)), _br2_load(x, sizeof(uintptr_t)), _br2_load(y, sizeof(uintptr_t)), &x1);
@@ -251,7 +275,13 @@ static void fe_sub(uintptr_t out, uintptr_t x, uintptr_t y) {
   _br2_store((out)+((uintptr_t)(UINTMAX_C(24))), x16, sizeof(uintptr_t));
   return;
 }
+#else
+static void fe_sub(uintptr_t r, uintptr_t a, uintptr_t b) {
+  fiat_p256_sub((void*)r, (void*)a, (void*)b);
+}
+#endif
 
+#if defined(OPENSSL_64_BIT)
 static void fe_halve(uintptr_t y, uintptr_t x) {
   uintptr_t mh0, mh1, mh2, m, mh3, y0, y1, y2, y3, mmh;
   m = value_barrier(((uintptr_t)(UINTMAX_C(0)))-((_br2_load(x, sizeof(uintptr_t)))&((uintptr_t)(UINTMAX_C(1)))));
@@ -268,9 +298,9 @@ static void fe_halve(uintptr_t y, uintptr_t x) {
   y1 = _br2_load((y)+((uintptr_t)(UINTMAX_C(8))), sizeof(uintptr_t));
   y2 = _br2_load((y)+((uintptr_t)(UINTMAX_C(16))), sizeof(uintptr_t));
   y3 = _br2_load((y)+((uintptr_t)(UINTMAX_C(24))), sizeof(uintptr_t));
-  y0 = shrd_64(y0, y1, (uintptr_t)(UINTMAX_C(1)));
-  y1 = shrd_64(y1, y2, (uintptr_t)(UINTMAX_C(1)));
-  y2 = shrd_64(y2, y3, (uintptr_t)(UINTMAX_C(1)));
+  y0 = shrd(y0, y1, (uintptr_t)(UINTMAX_C(1)));
+  y1 = shrd(y1, y2, (uintptr_t)(UINTMAX_C(1)));
+  y2 = shrd(y2, y3, (uintptr_t)(UINTMAX_C(1)));
   y3 = (y3)>>_br2_shamt((uintptr_t)(UINTMAX_C(1)));
   _br2_store(y, y0, sizeof(uintptr_t));
   _br2_store((y)+((uintptr_t)(UINTMAX_C(8))), y1, sizeof(uintptr_t));
@@ -280,6 +310,33 @@ static void fe_halve(uintptr_t y, uintptr_t x) {
   }
   return;
 }
+#else
+static void fe_halve(uintptr_t y_, uintptr_t x_) {
+  uint32_t *x = (uint32_t*) x_;
+  uint32_t *y = (uint32_t*) y_;
+
+  uint32_t m = value_barrier(-(x[0]&1));
+
+  uint64_t mh[4];
+  mh[0] = -1ULL;
+  mh[1] = mh[0]>>33;
+  mh[2] = mh[0]<<63;
+  mh[3] = (mh[0]<<32)>>1;
+  uint32_t mmh[8] = {0};
+
+  constant_time_conditional_memcpy(&mmh, mh, sizeof(mmh), m);
+
+  y[0] = shrd(x[0], y[1], 1);
+  y[1] = shrd(x[1], y[2], 1);
+  y[2] = shrd(x[2], y[3], 1);
+  y[3] = shrd(x[3], y[4], 1);
+  y[4] = shrd(x[4], y[5], 1);
+  y[5] = shrd(x[5], y[6], 1);
+  y[6] = shrd(x[6], y[7], 1);
+  y[7] = x[7]>>1;
+  fe_sub(y_, y_, (uintptr_t)&mmh[0]);
+}
+#endif
 
 static uintptr_t p256_point_add_affine_nz_nz_neq(uintptr_t out, uintptr_t in1, uintptr_t in2) {
   uintptr_t z1z1, Hsqr, ok, different_x, different_y, u2, Hcub, r, h, s2;
@@ -458,10 +515,9 @@ void p256_point_add(uintptr_t out, uintptr_t in1, uintptr_t in2) {
 static void fiat_p256_opp_conditional(fiat_p256_felem x, crypto_word_t c) {
   fiat_p256_felem alignas(32) n;
   fiat_p256_opp(n, x);
-  x[0] = cmov64(c, n[0], x[0]);
-  x[1] = cmov64(c, n[1], x[1]);
-  x[2] = cmov64(c, n[2], x[2]);
-  x[3] = cmov64(c, n[3], x[3]);
+  for (size_t i = 0; i < P256_LIMBS; ++i) {
+    x[i] = cmov(c, n[i], x[i]);
+  }
 }
 
 // bit returns the |i|th bit in |in|.
@@ -599,7 +655,7 @@ static void ec_GFp_nistp256_point_mul_public(const EC_GROUP *group,
 	    ret_is_zero = fiat_p256_is_zero((uintptr_t)ret[2]);
           } else {
             OPENSSL_memcpy(ret, fiat_p256_g_pre_comp[j][bits-1], sizeof(fiat_p256_g_pre_comp[j][bits-1]));
-            OPENSSL_memcpy(ret[2], fiat_p256_one, sizeof(ret[2]));
+	    fiat_p256_set_one(ret[2]);
             ret_is_zero = 0;
           }
         }
@@ -650,8 +706,10 @@ static void fiat_p256_select_point_affine(
 
 static void fiat_p256_conditional_zero_or_one(fiat_p256_felem x,
                                               crypto_word_t c) {
-  OPENSSL_memset(x, 0, sizeof(fiat_p256_felem));
-  constant_time_conditional_memcpy(x, fiat_p256_one, sizeof(fiat_p256_one), ~constant_time_is_zero_w(c));
+  fiat_p256_set_one(x);
+  for (size_t i = 0; i < P256_LIMBS; ++i) {
+    x[i] &= ~constant_time_is_zero_w(c);
+  }
 }
 
 #if defined(OPENSSL_SMALL)
@@ -666,7 +724,7 @@ static void fiat_p256_select_point_affine_15(
 static void p256_point_mul_base(fiat_p256_felem ret[3], const uint8_t s[32]) {
   int ret_is_zero = 1;  // Save two point operations in the first round.
   fiat_p256_felem alignas(32) t[3];
-  OPENSSL_memcpy(t[2], &fiat_p256_one, sizeof(fiat_p256_one));
+  fiat_p256_set_one(t[2]);
   for (size_t i = 31; i < 32; i--) {
     if (!ret_is_zero) {
       p256_point_double((uintptr_t)ret, (uintptr_t)ret);
@@ -743,7 +801,7 @@ static crypto_word_t booth_recode_w7(crypto_word_t in) {
 static void p256_point_mul_base(fiat_p256_felem ret[3], const uint8_t s[32]) {
   int ret_is_zero = 1;
   alignas(32) fiat_p256_felem t[3];
-  OPENSSL_memcpy(t[2], &fiat_p256_one, sizeof(fiat_p256_one));
+  fiat_p256_set_one(t[2]);
   for (size_t i = 36; i < 37; i--) {
     crypto_word_t wvalue;
     if (!i) {

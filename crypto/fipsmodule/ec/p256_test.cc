@@ -53,15 +53,12 @@ TEST(P256Test, AdxSquareABI) {
     GTEST_SKIP() << "Can't test ABI of ADX code without ADX";
   }
 }
-#endif
 
 TEST(P256Test, BEEU) {
-#if defined(OPENSSL_X86_64)
   if (!CRYPTO_is_AVX_capable()) {
     // No AVX support; cannot run the BEEU code.
     return;
   }
-#endif
 
   const EC_GROUP *group = EC_group_p256();
   BN_ULONG order_words[P256_LIMBS];
@@ -120,7 +117,7 @@ TEST(P256Test, BEEU) {
     }
   }
 }
-
+#endif
 
 typedef fiat_p256_felem P256_POINT_AFFINE[2];
 typedef fiat_p256_felem P256_POINT[3];
@@ -271,6 +268,8 @@ static void TestOrdMulMont(FileTest *t) {
   ASSERT_TRUE(GetFieldElement(t, b, "B"));
   ASSERT_TRUE(GetFieldElement(t, result, "Result"));
 
+#if !defined(OPENSSL_NO_ASM) && \
+    (defined(OPENSSL_X86_64) || defined(OPENSSL_AARCH64))
   BN_ULONG ret[P256_LIMBS];
   ecp_nistz256_ord_mul_mont(ret, a, b);
   EXPECT_FIELD_ELEMENTS_EQUAL(result, ret);
@@ -302,6 +301,9 @@ static void TestOrdMulMont(FileTest *t) {
     ecp_nistz256_ord_sqr_mont(ret, ret /* a */, 1);
     EXPECT_FIELD_ELEMENTS_EQUAL(result, ret);
   }
+#else
+    // "Can't test 64-bit asm with 32-bit build"
+#endif
 }
 
 static bool PointToAffine(P256_POINT_AFFINE out, const P256_POINT in) {
@@ -426,10 +428,13 @@ static void TestPointAdd(FileTest *t) {
   ecp_nistz256_point_add(ret, ret /* b */, a);
   EXPECT_POINTS_EQUAL(result, ret);
 
-  P256_POINT a_affine = {{}, {}, {0x1, 0xffffffff00000000, 0xffffffffffffffff, 0xfffffffe}}, /* 1 */
-	     b_affine = {{}, {}, {0x1, 0xffffffff00000000, 0xffffffffffffffff, 0xfffffffe}}; /* 1 */
+  P256_POINT a_affine, b_affine;
   ASSERT_TRUE(PointToAffine(a_affine, a));
   ASSERT_TRUE(PointToAffine(b_affine, b));
+  static const uint64_t p256_fe_one[4] = {
+    0x1, 0xffffffff00000000, 0xffffffffffffffff, 0xfffffffe};
+  OPENSSL_memcpy(a_affine[2], p256_fe_one, sizeof(a_affine[2]));
+  OPENSSL_memcpy(b_affine[2], p256_fe_one, sizeof(b_affine[2]));
 
   ecp_nistz256_point_add_affine(ret, a, b_affine);
   EXPECT_POINTS_EQUAL(result, ret);
