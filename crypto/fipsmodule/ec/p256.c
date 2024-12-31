@@ -43,9 +43,45 @@
 
 // BEDROCK2 BUILDING BLOCKS
 
+#if !defined(OPENSSL_NO_ASM) && defined(__GNUC__) && defined(__x86_64__)
+void fiat_p256_adx_mul(uint64_t*, const uint64_t*, const uint64_t*);
+void fiat_p256_adx_sqr(uint64_t*, const uint64_t*);
+#elif !defined(OPENSSL_NO_ASM) && defined(__GNUC__) && defined(__aarch64__)
+void ecp_nistz256_mul_mont(uint64_t x0[4],const uint64_t x1[4], const uint64_t x2[4]);
+void ecp_nistz256_sqr_mont(uint64_t x0[4],const uint64_t x1[4]);
+#endif
 
-static inline void fe_mul(uintptr_t out, uintptr_t x, uintptr_t y) { fiat_p256_mul((crypto_word_t*)out, (crypto_word_t*)x, (crypto_word_t*)y); }
-static inline void fe_sqr(uintptr_t out, uintptr_t x) { fiat_p256_square((crypto_word_t*)out, (crypto_word_t*)x); }
+static void p256_coord_mul(fiat_p256_felem r, const fiat_p256_felem x, const fiat_p256_felem y) {
+#if !defined(OPENSSL_NO_ASM) && defined(__GNUC__) && defined(__x86_64__)
+  if (CRYPTO_is_BMI1_capable() && CRYPTO_is_BMI2_capable() &&
+    CRYPTO_is_ADX_capable()) {
+      return fiat_p256_adx_mul(out1, arg1, arg2);
+  }
+#elif !defined(OPENSSL_NO_ASM) && defined(__GNUC__) && defined(__aarch64__)
+  return ecp_nistz256_mul_mont(r, x, y);
+#endif
+  return fiat_p256_mul(r, x, y);
+}
+
+static void p256_coord_sqr(fiat_p256_felem r, const fiat_p256_felem x) {
+#if !defined(OPENSSL_NO_ASM) && defined(__GNUC__) && defined(__x86_64__)
+  if (CRYPTO_is_BMI1_capable() && CRYPTO_is_BMI2_capable() &&
+    CRYPTO_is_ADX_capable()) {
+      fiat_p256_adx_sqr(out1, arg1);
+      return;
+  }
+#elif !defined(OPENSSL_NO_ASM) && defined(__GNUC__) && defined(__aarch64__)
+ return ecp_nistz256_sqr_mont(r, x);
+#endif
+  return fiat_p256_square(r, x);
+}
+
+static inline void fe_mul(uintptr_t out, uintptr_t x, uintptr_t y) {
+	p256_coord_mul((crypto_word_t*)out, (crypto_word_t*)x, (crypto_word_t*)y);
+}
+static inline void fe_sqr(uintptr_t out, uintptr_t x) {
+	p256_coord_sqr((crypto_word_t*)out, (crypto_word_t*)x);
+}
 
 static uintptr_t value_barrier(uintptr_t a) {
   return value_barrier_w(a);
@@ -61,7 +97,9 @@ static inline uintptr_t nonzero(uintptr_t a) {
 
 static inline uintptr_t cmov(uintptr_t c, uintptr_t vnz, uintptr_t vz) {
 #if defined(__clang__) && __clang_major__ == 16 && clang_minor__ == 0 && \
-    defined(__x86_64__)
+      defined(__x86_64__) || \
+    defined(__clang__) && __clang_major__ == 19 && clang_minor__ == 1 && \
+      defined(__aarch64__)
   return c ? vnz : vz; // generates cmov and keeps condition flag
 #elif !defined(OPENSSL_NO_ASM) && defined(__GNUC__) && defined(__x86_64__)
   __asm__ (
@@ -176,9 +214,32 @@ static void fe_add(uintptr_t r, uintptr_t a, uintptr_t b) {
 #endif
 
 
-// BEDROCK2 GENERATED CODE
-
-
+#ifdef __GNUC__
+typedef uint8_t  _br2_u8 __attribute__((aligned(1), may_alias));
+typedef uint16_t _br2_u16 __attribute__((aligned(1), may_alias));
+typedef uint32_t _br2_u32 __attribute__((aligned(1), may_alias));
+typedef uint64_t _br2_u64 __attribute__((aligned(1), may_alias));
+static inline  __attribute__((always_inline, unused))
+uintptr_t _br2_load(uintptr_t a, uintptr_t sz) {
+  switch (sz) {
+  case 1: { return *(_br2_u8*)a; }
+  case 2: { return *(_br2_u16*)a; }
+  case 4: { return *(_br2_u32*)a; }
+  case 8: { return *(_br2_u64*)a; }
+  default: __builtin_unreachable();
+  }
+}
+static inline __attribute__((always_inline, unused))
+void _br2_store(uintptr_t a, uintptr_t v, uintptr_t sz) {
+  switch (sz) {
+  case 1: { *(_br2_u8*)a = v; return; }
+  case 2: { *(_br2_u16*)a = v; return; }
+  case 4: { *(_br2_u32*)a = v; return; }
+  case 8: { *(_br2_u64*)a = v; return; }
+  default: __builtin_unreachable();
+  }
+}
+#else
 // We use memcpy to work around -fstrict-aliasing.
 // A plain memcpy is enough on clang 10, but not on gcc 10, which fails
 // to infer the bounds on an integer loaded by memcpy.
@@ -197,11 +258,14 @@ uintptr_t _br2_load(uintptr_t a, uintptr_t sz) {
   default: __builtin_unreachable();
   }
 }
-
 static inline __attribute__((always_inline, unused))
 void _br2_store(uintptr_t a, uintptr_t v, uintptr_t sz) {
   memcpy((void*)a, &v, sz);
 }
+#endif
+
+
+// BEDROCK2 GENERATED CODE
 
 static inline __attribute__((always_inline, unused))
 uintptr_t _br2_mulhuu(uintptr_t a, uintptr_t b) {
@@ -845,64 +909,64 @@ static void fiat_p256_inv_square(fiat_p256_felem out,
   // This implements the addition chain described in
   // https://briansmith.org/ecc-inversion-addition-chains-01#p256_field_inversion
   fiat_p256_felem x2, x3, x6, x12, x15, x30, x32;
-  fiat_p256_square(x2, in);   // 2^2 - 2^1
-  fiat_p256_mul(x2, x2, in);  // 2^2 - 2^0
+  p256_coord_sqr(x2, in);   // 2^2 - 2^1
+  p256_coord_mul(x2, x2, in);  // 2^2 - 2^0
 
-  fiat_p256_square(x3, x2);   // 2^3 - 2^1
-  fiat_p256_mul(x3, x3, in);  // 2^3 - 2^0
+  p256_coord_sqr(x3, x2);   // 2^3 - 2^1
+  p256_coord_mul(x3, x3, in);  // 2^3 - 2^0
 
-  fiat_p256_square(x6, x3);
+  p256_coord_sqr(x6, x3);
   for (int i = 1; i < 3; i++) {
-    fiat_p256_square(x6, x6);
+    p256_coord_sqr(x6, x6);
   }                           // 2^6 - 2^3
-  fiat_p256_mul(x6, x6, x3);  // 2^6 - 2^0
+  p256_coord_mul(x6, x6, x3);  // 2^6 - 2^0
 
-  fiat_p256_square(x12, x6);
+  p256_coord_sqr(x12, x6);
   for (int i = 1; i < 6; i++) {
-    fiat_p256_square(x12, x12);
+    p256_coord_sqr(x12, x12);
   }                             // 2^12 - 2^6
-  fiat_p256_mul(x12, x12, x6);  // 2^12 - 2^0
+  p256_coord_mul(x12, x12, x6);  // 2^12 - 2^0
 
-  fiat_p256_square(x15, x12);
+  p256_coord_sqr(x15, x12);
   for (int i = 1; i < 3; i++) {
-    fiat_p256_square(x15, x15);
+    p256_coord_sqr(x15, x15);
   }                             // 2^15 - 2^3
-  fiat_p256_mul(x15, x15, x3);  // 2^15 - 2^0
+  p256_coord_mul(x15, x15, x3);  // 2^15 - 2^0
 
-  fiat_p256_square(x30, x15);
+  p256_coord_sqr(x30, x15);
   for (int i = 1; i < 15; i++) {
-    fiat_p256_square(x30, x30);
+    p256_coord_sqr(x30, x30);
   }                              // 2^30 - 2^15
-  fiat_p256_mul(x30, x30, x15);  // 2^30 - 2^0
+  p256_coord_mul(x30, x30, x15);  // 2^30 - 2^0
 
-  fiat_p256_square(x32, x30);
-  fiat_p256_square(x32, x32);   // 2^32 - 2^2
-  fiat_p256_mul(x32, x32, x2);  // 2^32 - 2^0
+  p256_coord_sqr(x32, x30);
+  p256_coord_sqr(x32, x32);   // 2^32 - 2^2
+  p256_coord_mul(x32, x32, x2);  // 2^32 - 2^0
 
   fiat_p256_felem ret;
-  fiat_p256_square(ret, x32);
+  p256_coord_sqr(ret, x32);
   for (int i = 1; i < 31 + 1; i++) {
-    fiat_p256_square(ret, ret);
+    p256_coord_sqr(ret, ret);
   }                             // 2^64 - 2^32
-  fiat_p256_mul(ret, ret, in);  // 2^64 - 2^32 + 2^0
+  p256_coord_mul(ret, ret, in);  // 2^64 - 2^32 + 2^0
 
   for (int i = 0; i < 96 + 32; i++) {
-    fiat_p256_square(ret, ret);
+    p256_coord_sqr(ret, ret);
   }                              // 2^192 - 2^160 + 2^128
-  fiat_p256_mul(ret, ret, x32);  // 2^192 - 2^160 + 2^128 + 2^32 - 2^0
+  p256_coord_mul(ret, ret, x32);  // 2^192 - 2^160 + 2^128 + 2^32 - 2^0
 
   for (int i = 0; i < 32; i++) {
-    fiat_p256_square(ret, ret);
+    p256_coord_sqr(ret, ret);
   }                              // 2^224 - 2^192 + 2^160 + 2^64 - 2^32
-  fiat_p256_mul(ret, ret, x32);  // 2^224 - 2^192 + 2^160 + 2^64 - 2^0
+  p256_coord_mul(ret, ret, x32);  // 2^224 - 2^192 + 2^160 + 2^64 - 2^0
 
   for (int i = 0; i < 30; i++) {
-    fiat_p256_square(ret, ret);
+    p256_coord_sqr(ret, ret);
   }                              // 2^254 - 2^222 + 2^190 + 2^94 - 2^30
-  fiat_p256_mul(ret, ret, x30);  // 2^254 - 2^222 + 2^190 + 2^94 - 2^0
+  p256_coord_mul(ret, ret, x30);  // 2^254 - 2^222 + 2^190 + 2^94 - 2^0
 
-  fiat_p256_square(ret, ret);
-  fiat_p256_square(out, ret);  // 2^256 - 2^224 + 2^192 + 2^96 - 2^2
+  p256_coord_sqr(ret, ret);
+  p256_coord_sqr(out, ret);  // 2^256 - 2^224 + 2^192 + 2^96 - 2^2
 }
 
 
@@ -1068,16 +1132,16 @@ static int ec_GFp_nistp256_point_get_affine_coordinates(
   if (x_out != NULL) {
     fiat_p256_felem x;
     fiat_p256_from_generic(x, &point->X);
-    fiat_p256_mul(x, x, z2);
+    p256_coord_mul(x, x, z2);
     fiat_p256_to_generic(x_out, x);
   }
 
   if (y_out != NULL) {
     fiat_p256_felem y;
     fiat_p256_from_generic(y, &point->Y);
-    fiat_p256_square(z2, z2);  // z^-4
-    fiat_p256_mul(y, y, z1);   // y * z
-    fiat_p256_mul(y, y, z2);   // y * z^-3
+    p256_coord_sqr(z2, z2);  // z^-4
+    p256_coord_mul(y, y, z1);   // y * z
+    p256_coord_mul(y, y, z2);   // y * z^-3
     fiat_p256_to_generic(y_out, y);
   }
 
@@ -1096,11 +1160,11 @@ static int ec_GFp_nistp256_cmp_x_coordinate(const EC_GROUP *group,
   // not.
   fiat_p256_felem Z2_mont;
   fiat_p256_from_generic(Z2_mont, &p->Z);
-  fiat_p256_mul(Z2_mont, Z2_mont, Z2_mont);
+  p256_coord_mul(Z2_mont, Z2_mont, Z2_mont);
 
   fiat_p256_felem r_Z2;
   OPENSSL_memcpy(r_Z2, r->words, 32);  // r < order < p, so this is valid.
-  fiat_p256_mul(r_Z2, r_Z2, Z2_mont);
+  p256_coord_mul(r_Z2, r_Z2, Z2_mont);
 
   fiat_p256_felem X;
   fiat_p256_from_generic(X, &p->X);
@@ -1121,7 +1185,7 @@ static int ec_GFp_nistp256_cmp_x_coordinate(const EC_GROUP *group,
   if (carry == 0 &&
       bn_less_than_words(tmp.words, group->field.N.d, group->field.N.width)) {
     fiat_p256_from_generic(r_Z2, &tmp);
-    fiat_p256_mul(r_Z2, r_Z2, Z2_mont);
+    p256_coord_mul(r_Z2, r_Z2, Z2_mont);
     if (OPENSSL_memcmp(&r_Z2, &X, sizeof(r_Z2)) == 0) {
       return 1;
     }
